@@ -1,9 +1,14 @@
 import { withAuth } from "@kinde-oss/kinde-auth-nextjs/middleware";
+import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 export default withAuth(
-  async function proxy(_req: NextRequest) {
-    // auth handled by withAuth
+  async function proxy(req: NextRequest) {
+    const requestHeaders = new Headers(req.headers);
+    requestHeaders.set("x-pathname", req.nextUrl.pathname);
+    return NextResponse.next({
+      request: { headers: requestHeaders },
+    });
   },
   {
     publicPaths: [

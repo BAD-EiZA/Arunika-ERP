@@ -39,9 +39,11 @@ type BankData = {
         description: string | null;
         amount: string;
         isReconciled: boolean;
+        matchedRef?: string | null;
       }>;
     }>;
   }>;
+  glAccounts?: Array<{ code: string; name: string }>;
 };
 
 export function BankClient() {
@@ -99,6 +101,16 @@ export function BankClient() {
                     <Field label="No. rekening">
                       <Input name="accountNumber" />
                     </Field>
+                    <Field label="GL akun (opsional)">
+                      <Select name="glAccountCode" defaultValue="1110">
+                        <option value="">—</option>
+                        {(data.glAccounts || []).map((g) => (
+                          <option key={g.code} value={g.code}>
+                            {g.code} — {g.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
                   </FormGrid>
                   <MutationError error={mutation.error} />
                   <Button type="submit" disabled={mutation.isPending}>
@@ -106,7 +118,7 @@ export function BankClient() {
                   </Button>
                 </form>
               </Card>
-              <Card title="Import statement (1 baris)">
+              <Card title="Import / bank feed (CSV line)">
                 {data.accounts.length === 0 ? (
                   <EmptyState message="Buat rekening dulu" />
                 ) : (
@@ -114,13 +126,20 @@ export function BankClient() {
                     className="space-y-3"
                     onSubmit={(e) => {
                       e.preventDefault();
+                      const f = formToObject(e.currentTarget);
                       mutation.mutate({
-                        action: "import",
-                        ...formToObject(e.currentTarget),
+                        action: f.mode === "feed" ? "feed_sync" : "import",
+                        ...f,
                       });
                     }}
                   >
                     <FormGrid>
+                      <Field label="Mode">
+                        <Select name="mode" defaultValue="import">
+                          <option value="import">Import statement</option>
+                          <option value="feed">Bank feed sync</option>
+                        </Select>
+                      </Field>
                       <Field label="Rekening">
                         <Select
                           name="bankAccountId"
@@ -154,7 +173,7 @@ export function BankClient() {
                       </Field>
                     </FormGrid>
                     <Button type="submit" variant="secondary" disabled={mutation.isPending}>
-                      Import
+                      Import / Sync feed
                     </Button>
                   </form>
                 )}
@@ -191,17 +210,60 @@ export function BankClient() {
                 <EmptyState message="Belum ada statement" />
               ) : (
                 <>
-                  <Table headers={["Rekening", "Tanggal", "Deskripsi", "Jumlah", "Rekonsiliasi"]}>
+                  <Table
+                    headers={[
+                      "Rekening",
+                      "Tanggal",
+                      "Deskripsi",
+                      "Jumlah",
+                      "Status",
+                      "Aksi",
+                    ]}
+                  >
                     {linesPage.items.map((l) => (
                       <tr key={l.id}>
                         <td className="px-3 py-2">{l.accountCode}</td>
-                        <td className="px-3 py-2">{formatDateId(l.lineDate)}</td>
+                        <td className="px-3 py-2">
+                          {formatDateId(l.lineDate)}
+                        </td>
                         <td className="px-3 py-2">{l.description || "-"}</td>
                         <td className="px-3 py-2">{formatIdr(l.amount)}</td>
                         <td className="px-3 py-2">
                           <Badge tone={l.isReconciled ? "success" : "warning"}>
-                            {l.isReconciled ? "Ya" : "Belum"}
+                            {l.isReconciled ? "Matched" : "Open"}
                           </Badge>
+                        </td>
+                        <td className="px-3 py-2">
+                          {!l.isReconciled ? (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              disabled={mutation.isPending}
+                              onClick={() =>
+                                mutation.mutate({
+                                  action: "reconcile",
+                                  lineId: l.id,
+                                  matchedRef: `MANUAL-${l.id.slice(0, 6)}`,
+                                })
+                              }
+                            >
+                              Rekonsiliasi
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              disabled={mutation.isPending}
+                              onClick={() =>
+                                mutation.mutate({
+                                  action: "unreconcile",
+                                  lineId: l.id,
+                                })
+                              }
+                            >
+                              Batal
+                            </Button>
+                          )}
                         </td>
                       </tr>
                     ))}

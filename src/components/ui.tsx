@@ -1,6 +1,11 @@
 "use client";
 
-import type { ReactNode } from "react";
+import {
+  Children,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
@@ -14,16 +19,16 @@ import {
   Button as HeroButton,
   Card as HeroCard,
   Chip,
-  Form as HeroForm,
   Input as HeroInput,
   Label as HeroLabel,
+  Pagination,
   Skeleton,
   Spinner,
   Table as HeroTable,
+  Tabs,
   TextArea as HeroTextArea,
 } from "@heroui/react";
 import { cn } from "@/lib/cn";
-import { HeroPaginationBar } from "@/components/heroui-kit";
 
 export function PageHeader({
   title,
@@ -230,9 +235,7 @@ export function Field({
     <div className="space-y-1.5">
       <Label>{label}</Label>
       {children}
-      {error ? (
-        <p className="text-xs text-danger">{error}</p>
-      ) : null}
+      {error ? <p className="text-xs text-danger">{error}</p> : null}
     </div>
   );
 }
@@ -260,38 +263,60 @@ export function Badge({
   );
 }
 
+/**
+ * HeroUI Table (v3 correct compound API).
+ * Accepts legacy children as <tr><td>…</td></tr> and maps to Table.Row/Cell.
+ */
 export function Table({
   headers,
   children,
+  "aria-label": ariaLabel = "Data table",
 }: {
   headers: string[];
   children: ReactNode;
+  "aria-label"?: string;
 }) {
+  const rows = Children.toArray(children).filter(isValidElement) as ReactElement<{
+    children?: ReactNode;
+  }>[];
+
   return (
-    <HeroTable className="w-full" variant="primary">
+    <HeroTable>
       <HeroTable.ScrollContainer>
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-border bg-surface text-xs uppercase tracking-wide text-muted">
-              <tr>
-                {headers.map((h) => (
-                  <th key={h} className="px-3 py-2.5 font-medium">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border bg-background">
-              {children}
-            </tbody>
-          </table>
-        </div>
+        <HeroTable.Content
+          aria-label={ariaLabel}
+          className="min-w-full"
+        >
+          <HeroTable.Header>
+            {headers.map((h, i) => (
+              <HeroTable.Column key={h} isRowHeader={i === 0}>
+                {h}
+              </HeroTable.Column>
+            ))}
+          </HeroTable.Header>
+          <HeroTable.Body>
+            {rows.map((row, rowIndex) => {
+              const cells = Children.toArray(row.props.children).filter(
+                isValidElement,
+              ) as ReactElement<{ children?: ReactNode }>[];
+              const rowId = String(row.key ?? `row-${rowIndex}`);
+              return (
+                <HeroTable.Row key={rowId} id={rowId}>
+                  {cells.map((cell, cellIndex) => (
+                    <HeroTable.Cell key={`${rowId}-${cellIndex}`}>
+                      {cell.props.children}
+                    </HeroTable.Cell>
+                  ))}
+                </HeroTable.Row>
+              );
+            })}
+          </HeroTable.Body>
+        </HeroTable.Content>
       </HeroTable.ScrollContainer>
     </HeroTable>
   );
 }
 
-/** HeroUI Form — use when not relying on native FormData quirks. */
 export function Form({
   children,
   className,
@@ -302,9 +327,9 @@ export function Form({
   onSubmit?: React.FormEventHandler<HTMLFormElement>;
 }) {
   return (
-    <HeroForm className={cn("space-y-3", className)} onSubmit={onSubmit as never}>
+    <form className={cn("space-y-3", className)} onSubmit={onSubmit}>
       {children}
-    </HeroForm>
+    </form>
   );
 }
 
@@ -339,7 +364,31 @@ export function FormGrid({ children }: { children: ReactNode }) {
   return <div className="grid gap-3 sm:grid-cols-2">{children}</div>;
 }
 
-export function PaginationBar(props: {
+function pageNumbers(page: number, totalPages: number) {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1) as Array<
+      number | "ellipsis"
+    >;
+  }
+  const pages: Array<number | "ellipsis"> = [1];
+  if (page > 3) pages.push("ellipsis");
+  const start = Math.max(2, page - 1);
+  const end = Math.min(totalPages - 1, page + 1);
+  for (let i = start; i <= end; i++) pages.push(i);
+  if (page < totalPages - 2) pages.push("ellipsis");
+  pages.push(totalPages);
+  return pages;
+}
+
+/** HeroUI Pagination — docs: onPress, Previous/Next + Link. */
+export function PaginationBar({
+  page,
+  totalPages,
+  total,
+  limit,
+  onPageChange,
+  disabled,
+}: {
   page: number;
   totalPages: number;
   total: number;
@@ -347,7 +396,90 @@ export function PaginationBar(props: {
   onPageChange: (page: number) => void;
   disabled?: boolean;
 }) {
-  return <HeroPaginationBar {...props} />;
+  if (total === 0) return null;
+  const from = (page - 1) * (limit ?? 20) + 1;
+  const to = Math.min(page * (limit ?? 20), total);
+  const pages = pageNumbers(page, totalPages);
+
+  return (
+    <Pagination className="mt-3 w-full" size="sm">
+      <Pagination.Summary>
+        Menampilkan {from}–{to} dari {total}
+      </Pagination.Summary>
+      <Pagination.Content>
+        <Pagination.Item>
+          <Pagination.Previous
+            isDisabled={disabled || page <= 1}
+            onPress={() => onPageChange(page - 1)}
+          >
+            <Pagination.PreviousIcon />
+            <span>Sebelumnya</span>
+          </Pagination.Previous>
+        </Pagination.Item>
+        {pages.map((p, i) =>
+          p === "ellipsis" ? (
+            <Pagination.Item key={`e-${i}`}>
+              <Pagination.Ellipsis />
+            </Pagination.Item>
+          ) : (
+            <Pagination.Item key={p}>
+              <Pagination.Link
+                isActive={p === page}
+                isDisabled={disabled}
+                onPress={() => onPageChange(p)}
+              >
+                {p}
+              </Pagination.Link>
+            </Pagination.Item>
+          ),
+        )}
+        <Pagination.Item>
+          <Pagination.Next
+            isDisabled={disabled || page >= totalPages}
+            onPress={() => onPageChange(page + 1)}
+          >
+            <span>Berikutnya</span>
+            <Pagination.NextIcon />
+          </Pagination.Next>
+        </Pagination.Item>
+      </Pagination.Content>
+    </Pagination>
+  );
+}
+
+/** HeroUI Tabs — docs: Tab id + Indicator inside Tab, Panel id match. */
+export function AppTabs({
+  items,
+  defaultSelectedKey,
+  "aria-label": ariaLabel = "Tabs",
+}: {
+  items: Array<{ id: string; title: string; content: ReactNode }>;
+  defaultSelectedKey?: string;
+  "aria-label"?: string;
+}) {
+  if (!items.length) return null;
+  return (
+    <Tabs
+      className="w-full"
+      defaultSelectedKey={defaultSelectedKey ?? items[0].id}
+    >
+      <Tabs.ListContainer>
+        <Tabs.List aria-label={ariaLabel}>
+          {items.map((item) => (
+            <Tabs.Tab key={item.id} id={item.id}>
+              {item.title}
+              <Tabs.Indicator />
+            </Tabs.Tab>
+          ))}
+        </Tabs.List>
+      </Tabs.ListContainer>
+      {items.map((item) => (
+        <Tabs.Panel key={item.id} id={item.id} className="pt-4">
+          {item.content}
+        </Tabs.Panel>
+      ))}
+    </Tabs>
+  );
 }
 
 export function AppAlert({

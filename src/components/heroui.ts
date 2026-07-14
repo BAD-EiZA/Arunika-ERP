@@ -1,5 +1,6 @@
 /**
- * HeroUI v3 — raw re-exports + app wrappers.
+ * Re-exports: raw HeroUI + safe app kit.
+ * Prefer @/components/ui for forms; heroui-kit for tabs/modal/dropdown helpers.
  */
 "use client";
 
@@ -8,37 +9,14 @@ export {
   Avatar,
   Badge as HeroBadge,
   Breadcrumbs,
-  Calendar,
+  Button as HeroButton,
   Card as HeroCard,
-  Checkbox,
-  ComboBox,
-  DatePicker,
-  Dropdown,
-  ErrorMessage,
-  Fieldset,
-  Form as HeroForm,
+  Chip,
   Input as HeroInput,
-  InputGroup,
-  ListBox,
-  Meter,
-  Modal,
-  NumberField,
-  Pagination,
-  Popover,
-  ProgressBar,
-  Select as HeroSelect,
+  Label,
   Skeleton,
   Spinner,
-  Table as HeroTable,
-  Tabs,
   TextArea as HeroTextArea,
-  TextField,
-  Toast,
-  toast,
-  Button as HeroButton,
-  Chip,
-  Label,
-  EmptyState as HeroEmptyState,
 } from "@heroui/react";
 
 export * from "@/components/heroui-kit";

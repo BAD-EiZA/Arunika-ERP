@@ -1,10 +1,12 @@
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { AppShell } from "@/components/shell";
 import {
   getSessionUser,
   getTenantContext,
   listUserCompanies,
 } from "@/lib/auth";
+import { canAccessPath, firstAllowedPath } from "@/lib/nav-access";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +25,14 @@ export default async function ErpLayout({
   if (!ctx) redirect("/onboarding");
 
   const company = memberships.find((m) => m.companyId === ctx.companyId)?.company;
+  const permissions: "*" | string[] =
+    ctx.permissions === "*" ? "*" : Array.from(ctx.permissions);
+
+  const h = await headers();
+  const pathname = h.get("x-pathname") ?? "";
+  if (pathname && !canAccessPath(pathname, permissions)) {
+    redirect(firstAllowedPath(permissions));
+  }
 
   return (
     <AppShell
@@ -33,6 +43,8 @@ export default async function ErpLayout({
         id: m.companyId,
         name: m.company.name,
       }))}
+      permissions={permissions}
+      roleCode={ctx.roleCode}
     >
       {children}
     </AppShell>

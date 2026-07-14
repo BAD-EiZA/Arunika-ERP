@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { LogoutLink } from "@kinde-oss/kinde-auth-nextjs/components";
 import {
   Button as HeroButton,
@@ -42,6 +42,7 @@ import { cn } from "@/lib/cn";
 import { actionSwitchCompany } from "@/app/actions";
 import { Button, Select, UserAvatar } from "@/components/ui";
 import { AppDropdown, toast } from "@/components/heroui-kit";
+import { filterNavByPermissions } from "@/lib/nav-access";
 
 type NavItem = {
   href: string;
@@ -55,6 +56,8 @@ type NavGroup = {
   icon: LucideIcon;
   items: NavItem[];
 };
+
+type PermissionGrant = "*" | string[];
 
 const NAV_GROUPS: NavGroup[] = [
   {
@@ -116,10 +119,13 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/finance/accounts", label: "COA" },
       { href: "/finance/journals", label: "Jurnal" },
+      { href: "/finance/recurring", label: "Recurring" },
       { href: "/finance/periods", label: "Periode" },
       { href: "/finance/bank", label: "Bank" },
       { href: "/finance/budget", label: "Budget" },
       { href: "/finance/assets", label: "Aset Tetap" },
+      { href: "/finance/expenses", label: "Biaya" },
+      { href: "/finance/approvals", label: "Approval Matrix" },
       { href: "/reports", label: "Laporan FS", icon: FileSpreadsheet },
     ],
   },
@@ -228,39 +234,87 @@ function SidebarNav({
   collapsed,
   query,
   onNavigate,
+  permissions,
 }: {
   pathname: string;
   collapsed: boolean;
   query: string;
   onNavigate?: () => void;
+  permissions: PermissionGrant;
 }) {
+  const router = useRouter();
   const q = query.trim().toLowerCase();
   const groups = useMemo(() => {
-    if (!q) return NAV_GROUPS;
-    return NAV_GROUPS.map((g) => ({
-      ...g,
-      items: g.items.filter(
-        (i) =>
-          i.label.toLowerCase().includes(q) ||
-          i.href.toLowerCase().includes(q) ||
-          g.label.toLowerCase().includes(q),
-      ),
-    })).filter((g) => g.items.length > 0);
-  }, [q]);
+    const allowed = filterNavByPermissions(NAV_GROUPS, permissions);
+    if (!q) return allowed;
+    return allowed
+      .map((g) => ({
+        ...g,
+        items: g.items.filter(
+          (i) =>
+            i.label.toLowerCase().includes(q) ||
+            i.href.toLowerCase().includes(q) ||
+            g.label.toLowerCase().includes(q),
+        ),
+      }))
+      .filter((g) => g.items.length > 0);
+  }, [q, permissions]);
 
   if (collapsed) {
-    const flat = groups.flatMap((g) => g.items);
     return (
-      <nav className="space-y-1 p-2">
-        {flat.map((item) => (
-          <NavLink
-            key={item.href}
-            item={item}
-            pathname={pathname}
-            collapsed
-            onNavigate={onNavigate}
-          />
-        ))}
+      <nav className="flex flex-col items-center gap-1 p-2">
+        {groups.map((group) => {
+          const active = groupHasActive(pathname, group);
+          const Icon = group.icon;
+          if (group.items.length === 1) {
+            const only = group.items[0];
+            return (
+              <Link
+                key={group.id}
+                href={only.href}
+                title={only.label}
+                onClick={onNavigate}
+                className={cn(
+                  "flex size-10 items-center justify-center rounded-lg transition-colors",
+                  active
+                    ? "bg-accent text-accent-foreground shadow-sm"
+                    : "text-foreground/70 hover:bg-accent/10 hover:text-foreground",
+                )}
+              >
+                <Icon className="size-4" />
+              </Link>
+            );
+          }
+          return (
+            <AppDropdown
+              key={group.id}
+              aria-label={group.label}
+              placement="right"
+              label={
+                <HeroButton
+                  variant="ghost"
+                  size="sm"
+                  isIconOnly
+                  aria-label={group.label}
+                  className={cn(
+                    "size-10 min-w-10",
+                    active && "bg-accent/15 text-accent",
+                  )}
+                >
+                  <Icon className="size-4" />
+                </HeroButton>
+              }
+              items={group.items.map((item) => ({
+                key: item.href,
+                label: item.label,
+                onAction: () => {
+                  router.push(item.href);
+                  onNavigate?.();
+                },
+              }))}
+            />
+          );
+        })}
       </nav>
     );
   }
@@ -273,7 +327,7 @@ function SidebarNav({
         const defaultExpanded = active || Boolean(q) || group.id === "home";
         return (
           <Disclosure
-            key={group.id}
+            key={`${group.id}-${defaultExpanded ? "open" : "closed"}`}
             defaultExpanded={defaultExpanded}
             className="rounded-xl border border-transparent"
           >
@@ -313,7 +367,7 @@ function SidebarNav({
 function Brand({ collapsed }: { collapsed?: boolean }) {
   return (
     <div className={cn("flex items-center gap-2.5", collapsed && "justify-center")}>
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#60241E] to-[#E77B49] text-sm font-bold text-[#fff5f0] shadow-sm">
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#1B262C] to-[#3282B8] text-sm font-bold text-[#BBE1FA] shadow-sm">
         A
       </div>
       {!collapsed ? (
@@ -334,32 +388,48 @@ export function AppShell({
   userName,
   companies,
   activeCompanyId,
+  permissions = "*",
+  roleCode,
 }: {
   children: React.ReactNode;
   companyName: string;
   userName: string;
   companies: Array<{ id: string; name: string }>;
   activeCompanyId: string;
+  permissions?: PermissionGrant;
+  roleCode?: string;
 }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [query, setQuery] = useState("");
 
+  const allowedNav = useMemo(
+    () => filterNavByPermissions(NAV_GROUPS, permissions),
+    [permissions],
+  );
+
   const currentLabel =
-    NAV_GROUPS.flatMap((g) => g.items).find((i) => isActivePath(pathname, i.href))
+    allowedNav.flatMap((g) => g.items).find((i) => isActivePath(pathname, i.href))
       ?.label ?? "ERP";
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_rgba(231,123,73,0.22),_transparent_55%),linear-gradient(180deg,#fff5f0_0%,#fde8df_45%,#fff5f0_100%)] text-foreground">
+    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_rgba(50,130,184,0.18),_transparent_55%),linear-gradient(180deg,#f5fafd_0%,#e8f4fc_45%,#f5fafd_100%)] text-foreground">
       <div className="mx-auto flex min-h-screen max-w-[1700px]">
         {/* Desktop sidebar */}
         <aside
           className={cn(
-            "sticky top-0 hidden h-screen shrink-0 flex-col border-r border-border/80 bg-surface/90 backdrop-blur-md transition-[width] duration-200 lg:flex",
+            "sticky top-0 hidden h-screen shrink-0 flex-col overflow-x-hidden border-r border-border/80 bg-surface/90 backdrop-blur-md transition-[width] duration-200 lg:flex",
             collapsed ? "w-[72px]" : "w-[280px]",
           )}
         >
-          <div className="flex items-center justify-between gap-2 border-b border-border/80 px-3 py-4">
+          <div
+            className={cn(
+              "flex border-b border-border/80 px-3 py-4",
+              collapsed
+                ? "flex-col items-center gap-2"
+                : "items-center justify-between gap-2",
+            )}
+          >
             <Brand collapsed={collapsed} />
             <HeroButton
               variant="ghost"
@@ -402,13 +472,14 @@ export function AppShell({
               pathname={pathname}
               collapsed={collapsed}
               query={collapsed ? "" : query}
+              permissions={permissions}
             />
           </ScrollShadow>
 
           <div className="border-t border-border/80 p-3">
             {!collapsed ? (
               <Chip color="accent" size="sm" variant="soft" className="w-full justify-center">
-                <Chip.Label>HeroUI · multi-tenant</Chip.Label>
+                <Chip.Label>{roleCode || "ERP"}</Chip.Label>
               </Chip>
             ) : (
               <div className="mx-auto size-2 rounded-full bg-accent" />
@@ -462,6 +533,7 @@ export function AppShell({
                               pathname={pathname}
                               collapsed={false}
                               query={query}
+                              permissions={permissions}
                             />
                           </ScrollShadow>
                         </Drawer.Body>

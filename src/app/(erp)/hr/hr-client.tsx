@@ -8,6 +8,7 @@ import {
   Field,
   FormGrid,
   Input,
+  AppTabs,
   PageHeader,
   PaginationBar,
   Select,
@@ -19,7 +20,6 @@ import {
   AppDatePicker,
   AppFieldset,
   AppInputGroup,
-  AppTabs,
   toast,
 } from "@/components/heroui-kit";
 import { useHrMutation, useHrQuery } from "@/hooks/use-erp-queries";

@@ -684,3 +684,14 @@ export function hasPermission(
   const list = Array.isArray(required) ? required : [required];
   return list.every((p) => set.has(p));
 }
+
+/** OR: true if any required permission is granted. */
+export function hasAnyPermission(
+  granted: ReadonlySet<string> | string[] | "*",
+  required: PermissionCode | PermissionCode[],
+): boolean {
+  if (granted === "*") return true;
+  const list = Array.isArray(required) ? required : [required];
+  if (list.length === 0) return true;
+  return list.some((p) => hasPermission(granted, p));
+}

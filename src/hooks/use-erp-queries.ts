@@ -12,6 +12,17 @@ export type DashboardData = {
   supplierCount: number;
   openPo: number;
   openSo: number;
+  arTotal: string;
+  apTotal: string;
+  charts: {
+    months: string[];
+    salesByMonth: Array<{ month: string; value: number }>;
+    purchaseByMonth: Array<{ month: string; value: number }>;
+    soStatus: Array<{ label: string; value: number }>;
+    poStatus: Array<{ label: string; value: number }>;
+    stockValue: Array<{ label: string; name: string; value: number; qty: number }>;
+    mix: Array<{ label: string; value: number }>;
+  };
   stockRows: Array<{
     id: string;
     quantityOnHand: string;
@@ -664,7 +675,28 @@ export function useMatchingMutation() {
 export function useFinanceAccountsQuery() {
   return useQuery({
     queryKey: queryKeys.finance.accounts,
-    queryFn: () => apiGet<{ accounts: Array<{ id: string; code: string; name: string; type: string; normalBalance: string; isActive: boolean }> }>("/api/erp/finance/accounts"),
+    queryFn: () =>
+      apiGet<{
+        accounts: Array<{
+          id: string;
+          code: string;
+          name: string;
+          type: string;
+          normalBalance: string;
+          isActive: boolean;
+        }>;
+      }>("/api/erp/finance/accounts"),
+  });
+}
+
+export function useFinanceAccountMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) =>
+      apiPost("/api/erp/finance/accounts", body),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: queryKeys.finance.accounts });
+    },
   });
 }
 
@@ -678,7 +710,8 @@ export function useFinanceJournalsQuery() {
 export function useFinanceJournalMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: Record<string, unknown>) => apiPost("/api/erp/finance/journals", body),
+    mutationFn: (body: Record<string, unknown>) =>
+      apiPost("/api/erp/finance/journals", body),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: queryKeys.finance.journals });
     },
@@ -695,9 +728,30 @@ export function useFinancePeriodsQuery() {
 export function useClosePeriodMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { id: string }) => apiPost("/api/erp/finance/periods", body),
+    mutationFn: (body: Record<string, unknown>) =>
+      apiPost("/api/erp/finance/periods", body),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: queryKeys.finance.periods });
+    },
+  });
+}
+
+export function useFinanceExpensesQuery() {
+  return useQuery({
+    queryKey: ["finance", "expenses"] as const,
+    queryFn: () =>
+      apiGet<Record<string, unknown>>("/api/erp/finance/expenses"),
+  });
+}
+
+export function useFinanceExpenseMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) =>
+      apiPost("/api/erp/finance/expenses", body),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["finance", "expenses"] });
+      await qc.invalidateQueries({ queryKey: queryKeys.finance.journals });
     },
   });
 }

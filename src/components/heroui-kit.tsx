@@ -1,108 +1,162 @@
 "use client";
 
 /**
- * App-facing HeroUI wrappers (safe defaults).
- * Native form helpers stay in ui.tsx (FormData-friendly).
+ * HeroUI v3 wrappers — compound API per official docs.
+ * https://www.heroui.com/docs/react/components/*
  */
 import type { ReactNode } from "react";
 import {
+  Button,
   Checkbox,
   ComboBox,
   Dropdown,
-  ErrorMessage,
-  Fieldset,
-  Form as HeroForm,
   Input,
   InputGroup,
   Label,
   ListBox,
-  Meter,
   Modal,
   NumberField,
-  Pagination,
-  Popover,
-  ProgressBar,
-  Select as HeroSelect,
-  Table as HeroTable,
-  Tabs,
+  Select,
   TextField,
   Toast,
   toast,
-  Button as HeroButton,
 } from "@heroui/react";
 import { cn } from "@/lib/cn";
 
 export { toast, Toast };
 
-export function AppForm({
+/** Toast.Provider — render once at app root (docs: no special placement required). */
+export function ToastProvider({
   children,
-  className,
-  onSubmit,
+  placement = "bottom end",
 }: {
-  children: ReactNode;
-  className?: string;
-  onSubmit?: React.FormEventHandler<HTMLFormElement>;
+  children?: ReactNode;
+  placement?:
+    | "top"
+    | "top start"
+    | "top end"
+    | "bottom"
+    | "bottom start"
+    | "bottom end";
 }) {
   return (
-    <HeroForm className={cn("space-y-3", className)} onSubmit={onSubmit as never}>
+    <>
       {children}
-    </HeroForm>
+      <Toast.Provider placement={placement} maxVisibleToasts={4} />
+    </>
   );
 }
 
-export function AppFieldset({
-  legend,
+export function AppModal({
+  trigger,
+  title,
   children,
-  className,
+  size = "md",
+  footer,
 }: {
-  legend: string;
+  trigger: ReactNode;
+  title: string;
   children: ReactNode;
-  className?: string;
+  size?: "xs" | "sm" | "md" | "lg" | "cover" | "full";
+  footer?: ReactNode;
 }) {
   return (
-    <Fieldset className={className}>
-      <Fieldset.Legend className="mb-2 text-sm font-semibold">
-        {legend}
-      </Fieldset.Legend>
-      <Fieldset.Group className="space-y-3">{children}</Fieldset.Group>
-    </Fieldset>
+    <Modal>
+      {trigger}
+      <Modal.Backdrop>
+        <Modal.Container size={size} placement="center">
+          <Modal.Dialog className="sm:max-w-md">
+            <Modal.CloseTrigger />
+            <Modal.Header>
+              <Modal.Heading>{title}</Modal.Heading>
+            </Modal.Header>
+            <Modal.Body>{children}</Modal.Body>
+            {footer ? <Modal.Footer>{footer}</Modal.Footer> : null}
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
+    </Modal>
   );
 }
 
-export function AppTextField({
+export function AppDropdown({
   label,
-  name,
-  type = "text",
-  required,
-  defaultValue,
-  placeholder,
-  error,
-  description,
+  items,
+  placement = "bottom",
+  "aria-label": ariaLabel = "Menu",
 }: {
-  label: string;
-  name?: string;
-  type?: string;
-  required?: boolean;
-  defaultValue?: string;
-  placeholder?: string;
-  error?: string;
-  description?: string;
+  label: ReactNode;
+  items: Array<{
+    key: string;
+    label: string;
+    onAction?: () => void;
+    danger?: boolean;
+  }>;
+  placement?: "bottom" | "bottom start" | "bottom end" | "top" | "top start" | "top end" | "left" | "left top" | "left bottom" | "right" | "right top" | "right bottom";
+  "aria-label"?: string;
 }) {
   return (
-    <TextField
+    <Dropdown>
+      {typeof label === "string" ? (
+        <Button aria-label={ariaLabel} variant="secondary" size="sm">
+          {label}
+        </Button>
+      ) : (
+        label
+      )}
+      <Dropdown.Popover placement={placement}>
+        <Dropdown.Menu
+          onAction={(key) => {
+            const item = items.find((i) => i.key === String(key));
+            item?.onAction?.();
+          }}
+        >
+          {items.map((item) => (
+            <Dropdown.Item
+              key={item.key}
+              id={item.key}
+              textValue={item.label}
+              variant={item.danger ? "danger" : "default"}
+            >
+              <Label>{item.label}</Label>
+            </Dropdown.Item>
+          ))}
+        </Dropdown.Menu>
+      </Dropdown.Popover>
+    </Dropdown>
+  );
+}
+
+export function AppCheckbox({
+  children,
+  name,
+  value,
+  defaultSelected,
+  isSelected,
+  onChange,
+}: {
+  children: ReactNode;
+  name?: string;
+  value?: string;
+  defaultSelected?: boolean;
+  isSelected?: boolean;
+  onChange?: (selected: boolean) => void;
+}) {
+  return (
+    <Checkbox
       name={name}
-      type={type}
-      isRequired={required}
-      defaultValue={defaultValue}
-      className="w-full"
+      value={value}
+      defaultSelected={defaultSelected}
+      isSelected={isSelected}
+      onChange={onChange}
     >
-      <Label className="mb-1 text-sm">{label}</Label>
-      <Input placeholder={placeholder} fullWidth />
-      {description ? (
-        <p className="mt-1 text-xs text-muted">{description}</p>
-      ) : null}
-      {error ? <ErrorMessage>{error}</ErrorMessage> : null}
-    </TextField>
+      <Checkbox.Content>
+        <Checkbox.Control>
+          <Checkbox.Indicator />
+        </Checkbox.Control>
+        {children}
+      </Checkbox.Content>
+    </Checkbox>
   );
 }
 
@@ -113,6 +167,7 @@ export function AppNumberField({
   min,
   max,
   step,
+  className,
 }: {
   label: string;
   name?: string;
@@ -120,6 +175,7 @@ export function AppNumberField({
   min?: number;
   max?: number;
   step?: number;
+  className?: string;
 }) {
   return (
     <NumberField
@@ -128,13 +184,13 @@ export function AppNumberField({
       minValue={min}
       maxValue={max}
       step={step}
-      className="w-full"
+      className={cn("w-full max-w-full", className)}
     >
-      <Label className="mb-1 text-sm">{label}</Label>
-      <NumberField.Group className="w-full">
-        <NumberField.DecrementButton>-</NumberField.DecrementButton>
-        <NumberField.Input className="w-full" />
-        <NumberField.IncrementButton>+</NumberField.IncrementButton>
+      <Label>{label}</Label>
+      <NumberField.Group>
+        <NumberField.DecrementButton />
+        <NumberField.Input className="w-full min-w-[5rem]" />
+        <NumberField.IncrementButton />
       </NumberField.Group>
     </NumberField>
   );
@@ -148,6 +204,7 @@ export function AppInputGroup({
   placeholder,
   type = "text",
   defaultValue,
+  className,
 }: {
   label?: string;
   name?: string;
@@ -156,225 +213,21 @@ export function AppInputGroup({
   placeholder?: string;
   type?: string;
   defaultValue?: string;
+  className?: string;
 }) {
   return (
-    <div className="space-y-1.5">
-      {label ? <Label className="text-sm">{label}</Label> : null}
+    <TextField name={name} className={cn("w-full", className)}>
+      {label ? <Label>{label}</Label> : null}
       <InputGroup fullWidth>
         {prefix ? <InputGroup.Prefix>{prefix}</InputGroup.Prefix> : null}
         <InputGroup.Input
-          name={name}
           type={type}
           placeholder={placeholder}
           defaultValue={defaultValue}
         />
         {suffix ? <InputGroup.Suffix>{suffix}</InputGroup.Suffix> : null}
       </InputGroup>
-    </div>
-  );
-}
-
-export function AppCheckbox({
-  children,
-  name,
-  defaultSelected,
-  value,
-}: {
-  children: ReactNode;
-  name?: string;
-  defaultSelected?: boolean;
-  value?: string;
-}) {
-  return (
-    <Checkbox name={name} value={value} defaultSelected={defaultSelected}>
-      <Checkbox.Control>
-        <Checkbox.Indicator />
-      </Checkbox.Control>
-      <Checkbox.Content>{children}</Checkbox.Content>
-    </Checkbox>
-  );
-}
-
-export function AppProgress({
-  label,
-  value,
-  max = 100,
-}: {
-  label?: string;
-  value: number;
-  max?: number;
-}) {
-  return (
-    <ProgressBar value={value} maxValue={max} className="w-full">
-      {label ? (
-        <div className="mb-1 flex justify-between text-xs text-muted">
-          <span>{label}</span>
-          <ProgressBar.Output />
-        </div>
-      ) : null}
-      <ProgressBar.Track>
-        <ProgressBar.Fill />
-      </ProgressBar.Track>
-    </ProgressBar>
-  );
-}
-
-export function AppMeter({
-  label,
-  value,
-  max = 100,
-}: {
-  label?: string;
-  value: number;
-  max?: number;
-}) {
-  return (
-    <Meter value={value} maxValue={max} className="w-full">
-      {label ? (
-        <div className="mb-1 flex justify-between text-xs text-muted">
-          <span>{label}</span>
-          <Meter.Output />
-        </div>
-      ) : null}
-      <Meter.Track>
-        <Meter.Fill />
-      </Meter.Track>
-    </Meter>
-  );
-}
-
-export function AppTabs({
-  items,
-  defaultSelectedKey,
-}: {
-  items: Array<{ id: string; title: string; content: ReactNode }>;
-  defaultSelectedKey?: string;
-}) {
-  return (
-    <Tabs defaultSelectedKey={defaultSelectedKey ?? items[0]?.id} className="w-full">
-      <Tabs.ListContainer>
-        <Tabs.List>
-          {items.map((item) => (
-            <Tabs.Tab key={item.id} id={item.id}>
-              {item.title}
-              <Tabs.Indicator />
-            </Tabs.Tab>
-          ))}
-        </Tabs.List>
-      </Tabs.ListContainer>
-      {items.map((item) => (
-        <Tabs.Panel key={item.id} id={item.id} className="pt-4">
-          {item.content}
-        </Tabs.Panel>
-      ))}
-    </Tabs>
-  );
-}
-
-export function AppModal({
-  trigger,
-  title,
-  children,
-  size = "md",
-}: {
-  trigger: ReactNode;
-  title: string;
-  children: ReactNode;
-  size?: "sm" | "md" | "lg" | "cover" | "full" | "xs";
-}) {
-  return (
-    <Modal>
-      <Modal.Trigger>{trigger}</Modal.Trigger>
-      <Modal.Backdrop>
-        <Modal.Container size={size} placement="center">
-          <Modal.Dialog>
-            <Modal.Header>
-              <Modal.Heading>{title}</Modal.Heading>
-              <Modal.CloseTrigger />
-            </Modal.Header>
-            <Modal.Body>{children}</Modal.Body>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
-    </Modal>
-  );
-}
-
-export function AppDropdown({
-  label,
-  items,
-}: {
-  label: ReactNode;
-  items: Array<{ key: string; label: string; onAction?: () => void; danger?: boolean }>;
-}) {
-  return (
-    <Dropdown>
-      <Dropdown.Trigger>{label}</Dropdown.Trigger>
-      <Dropdown.Popover>
-        <Dropdown.Menu
-          onAction={(key) => {
-            const item = items.find((i) => i.key === String(key));
-            item?.onAction?.();
-          }}
-        >
-          {items.map((item) => (
-            <Dropdown.Item
-              key={item.key}
-              id={item.key}
-              className={item.danger ? "text-danger" : undefined}
-            >
-              {item.label}
-            </Dropdown.Item>
-          ))}
-        </Dropdown.Menu>
-      </Dropdown.Popover>
-    </Dropdown>
-  );
-}
-
-export function AppPopover({
-  trigger,
-  title,
-  children,
-}: {
-  trigger: ReactNode;
-  title?: string;
-  children: ReactNode;
-}) {
-  return (
-    <Popover>
-      <Popover.Trigger>{trigger}</Popover.Trigger>
-      <Popover.Content className="max-w-xs p-3">
-        <Popover.Dialog>
-          {title ? <Popover.Heading className="mb-1 text-sm font-semibold">{title}</Popover.Heading> : null}
-          <div className="text-sm text-muted">{children}</div>
-        </Popover.Dialog>
-      </Popover.Content>
-    </Popover>
-  );
-}
-
-export function AppListBox({
-  items,
-  "aria-label": ariaLabel,
-  onAction,
-}: {
-  items: Array<{ id: string; label: string }>;
-  "aria-label"?: string;
-  onAction?: (id: string) => void;
-}) {
-  return (
-    <ListBox
-      aria-label={ariaLabel ?? "List"}
-      className="max-h-48 overflow-auto rounded-lg border border-border p-1"
-      onAction={(key) => onAction?.(String(key))}
-    >
-      {items.map((item) => (
-        <ListBox.Item key={item.id} id={item.id} textValue={item.label}>
-          {item.label}
-        </ListBox.Item>
-      ))}
-    </ListBox>
+    </TextField>
   );
 }
 
@@ -382,42 +235,48 @@ export function AppHeroSelect({
   label,
   items,
   placeholder = "Pilih…",
-  onSelectionChange,
-  selectedKey,
+  name,
   defaultSelectedKey,
+  selectedKey,
+  onSelectionChange,
+  className,
 }: {
   label?: string;
   items: Array<{ id: string; label: string }>;
   placeholder?: string;
-  selectedKey?: string;
+  name?: string;
   defaultSelectedKey?: string;
+  selectedKey?: string;
   onSelectionChange?: (key: string) => void;
+  className?: string;
 }) {
   return (
-    <HeroSelect
-      className="w-full"
-      selectedKey={selectedKey}
-      defaultSelectedKey={defaultSelectedKey}
-      onSelectionChange={(key) => {
-        if (key != null) onSelectionChange?.(String(key));
-      }}
+    <Select
+      name={name}
+      className={cn("w-full", className)}
       placeholder={placeholder}
+      defaultValue={defaultSelectedKey}
+      value={selectedKey}
+      onChange={(value) => {
+        if (value != null) onSelectionChange?.(String(value));
+      }}
     >
-      {label ? <Label className="mb-1 text-sm">{label}</Label> : null}
-      <HeroSelect.Trigger>
-        <HeroSelect.Value />
-        <HeroSelect.Indicator />
-      </HeroSelect.Trigger>
-      <HeroSelect.Popover>
+      {label ? <Label>{label}</Label> : null}
+      <Select.Trigger>
+        <Select.Value />
+        <Select.Indicator />
+      </Select.Trigger>
+      <Select.Popover>
         <ListBox>
           {items.map((item) => (
             <ListBox.Item key={item.id} id={item.id} textValue={item.label}>
               {item.label}
+              <ListBox.ItemIndicator />
             </ListBox.Item>
           ))}
         </ListBox>
-      </HeroSelect.Popover>
-    </HeroSelect>
+      </Select.Popover>
+    </Select>
   );
 }
 
@@ -426,21 +285,23 @@ export function AppComboBox({
   items,
   placeholder = "Cari…",
   onSelectionChange,
+  className,
 }: {
   label?: string;
   items: Array<{ id: string; label: string }>;
   placeholder?: string;
   onSelectionChange?: (key: string) => void;
+  className?: string;
 }) {
   return (
     <ComboBox
-      className="w-full"
+      className={cn("w-full", className)}
       menuTrigger="focus"
       onSelectionChange={(key) => {
         if (key != null) onSelectionChange?.(String(key));
       }}
     >
-      {label ? <Label className="mb-1 text-sm">{label}</Label> : null}
+      {label ? <Label>{label}</Label> : null}
       <ComboBox.InputGroup>
         <Input placeholder={placeholder} />
         <ComboBox.Trigger />
@@ -450,6 +311,7 @@ export function AppComboBox({
           {items.map((item) => (
             <ListBox.Item key={item.id} id={item.id} textValue={item.label}>
               {item.label}
+              <ListBox.ItemIndicator />
             </ListBox.Item>
           ))}
         </ListBox>
@@ -458,7 +320,7 @@ export function AppComboBox({
   );
 }
 
-/** Date input via TextField — Calendar/DatePicker compound needs i18n provider later. */
+/** Date field (native type=date via TextField+Input — Calendar compound optional later). */
 export function AppDatePicker({
   label,
   name,
@@ -470,108 +332,26 @@ export function AppDatePicker({
 }) {
   return (
     <TextField name={name} type="date" defaultValue={defaultValue} className="w-full">
-      {label ? <Label className="mb-1 text-sm">{label}</Label> : null}
+      {label ? <Label>{label}</Label> : null}
       <Input type="date" fullWidth />
     </TextField>
   );
 }
 
-export function AppCalendar() {
-  return (
-    <TextField type="date" className="w-full">
-      <Label className="mb-1 text-sm">Tanggal</Label>
-      <Input type="date" fullWidth />
-    </TextField>
-  );
-}
-
-/** HeroUI table shell — still accepts header strings + row children (`tr`). */
-export function HeroDataTable({
-  headers,
+export function AppFieldset({
+  legend,
   children,
   className,
 }: {
-  headers: string[];
+  legend: string;
   children: ReactNode;
   className?: string;
 }) {
   return (
-    <HeroTable className={cn("w-full", className)} variant="primary">
-      <HeroTable.ScrollContainer>
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-border bg-surface text-xs uppercase tracking-wide text-muted">
-              <tr>
-                {headers.map((h) => (
-                  <th key={h} className="px-3 py-2.5 font-medium">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border bg-background">
-              {children}
-            </tbody>
-          </table>
-        </div>
-      </HeroTable.ScrollContainer>
-    </HeroTable>
-  );
-}
-
-export function HeroPaginationBar({
-  page,
-  totalPages,
-  total,
-  limit,
-  onPageChange,
-  disabled,
-}: {
-  page: number;
-  totalPages: number;
-  total: number;
-  limit?: number;
-  onPageChange: (page: number) => void;
-  disabled?: boolean;
-}) {
-  if (total === 0) return null;
-  const from = (page - 1) * (limit ?? 20) + 1;
-  const to = Math.min(page * (limit ?? 20), total);
-
-  return (
-    <div className="mt-3 flex flex-col gap-2 border-t border-border/70 pt-3 sm:flex-row sm:items-center sm:justify-between">
-      <p className="text-xs text-muted">
-        Menampilkan {from}–{to} dari {total}
-      </p>
-      <Pagination>
-        <Pagination.Content>
-          <Pagination.Item>
-            <Pagination.Previous
-              isDisabled={disabled || page <= 1}
-              onPress={() => onPageChange(page - 1)}
-            >
-              <Pagination.PreviousIcon />
-              Prev
-            </Pagination.Previous>
-          </Pagination.Item>
-          <Pagination.Item>
-            <Pagination.Link isActive>{page}</Pagination.Link>
-          </Pagination.Item>
-          <Pagination.Item>
-            <span className="px-1 text-xs text-muted">/ {totalPages}</span>
-          </Pagination.Item>
-          <Pagination.Item>
-            <Pagination.Next
-              isDisabled={disabled || page >= totalPages}
-              onPress={() => onPageChange(page + 1)}
-            >
-              Next
-              <Pagination.NextIcon />
-            </Pagination.Next>
-          </Pagination.Item>
-        </Pagination.Content>
-      </Pagination>
-    </div>
+    <fieldset className={cn("rounded-lg border border-border p-3", className)}>
+      <legend className="px-1 text-sm font-semibold">{legend}</legend>
+      <div className="mt-2 space-y-3">{children}</div>
+    </fieldset>
   );
 }
 
@@ -592,22 +372,27 @@ export function ConfirmModal({
     <AppModal
       title={title}
       trigger={
-        <HeroButton type="button" variant="secondary">
+        <Button variant="secondary" size="sm">
           {triggerLabel}
-        </HeroButton>
+        </Button>
+      }
+      footer={
+        <>
+          <Button slot="close" variant="secondary">
+            Batal
+          </Button>
+          <Button
+            onPress={() => {
+              onConfirm();
+              toast.success("Berhasil");
+            }}
+          >
+            {confirmLabel}
+          </Button>
+        </>
       }
     >
-      <p className="mb-4 text-sm text-muted">{description}</p>
-      <HeroButton
-        type="button"
-        variant="primary"
-        onPress={() => {
-          onConfirm();
-          toast.success("Berhasil");
-        }}
-      >
-        {confirmLabel}
-      </HeroButton>
+      <p className="text-sm text-muted">{description}</p>
     </AppModal>
   );
 }

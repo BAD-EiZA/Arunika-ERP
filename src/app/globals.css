@@ -6,70 +6,70 @@
   --font-mono: var(--font-geist-mono);
 }
 
-/* ColorHunt: #60241E · #95271D · #B34A44 · #E77B49 */
+/* ColorHunt: #1B262C · #0F4C75 · #3282B8 · #BBE1FA */
 @layer base {
   :root,
   .light,
   .default,
   [data-theme="light"],
   [data-theme="default"] {
-    --palette-deep: #60241e;
-    --palette-brick: #95271d;
-    --palette-coral: #b34a44;
-    --palette-ember: #e77b49;
+    --palette-deep: #1b262c;
+    --palette-navy: #0f4c75;
+    --palette-blue: #3282b8;
+    --palette-ice: #bbe1fa;
 
-    --background: #fff5f0;
-    --foreground: #60241e;
+    --background: #f5fafd;
+    --foreground: #1b262c;
 
-    --surface: #fffaf8;
-    --surface-foreground: #60241e;
-    --surface-secondary: color-mix(in srgb, #e77b49 12%, #fff5f0 88%);
-    --surface-secondary-foreground: #60241e;
-    --surface-tertiary: color-mix(in srgb, #b34a44 10%, #fff5f0 90%);
-    --surface-tertiary-foreground: #60241e;
+    --surface: #ffffff;
+    --surface-foreground: #1b262c;
+    --surface-secondary: color-mix(in srgb, #bbe1fa 45%, #ffffff 55%);
+    --surface-secondary-foreground: #1b262c;
+    --surface-tertiary: color-mix(in srgb, #3282b8 12%, #f5fafd 88%);
+    --surface-tertiary-foreground: #1b262c;
 
-    --overlay: #fffaf8;
-    --overlay-foreground: #60241e;
+    --overlay: #ffffff;
+    --overlay-foreground: #1b262c;
 
-    --muted: color-mix(in srgb, #60241e 55%, #b34a44 45%);
+    --muted: color-mix(in srgb, #1b262c 45%, #3282b8 55%);
 
-    --default: color-mix(in srgb, #e77b49 14%, #fff5f0 86%);
-    --default-foreground: #60241e;
+    --default: color-mix(in srgb, #bbe1fa 55%, #ffffff 45%);
+    --default-foreground: #1b262c;
 
-    --accent: #95271d;
-    --accent-foreground: #fff5f0;
+    --accent: #0f4c75;
+    --accent-foreground: #bbe1fa;
 
-    --field-background: #fffaf8;
-    --field-foreground: #60241e;
-    --field-placeholder: color-mix(in srgb, #60241e 45%, transparent);
-    --field-border: color-mix(in srgb, #60241e 12%, transparent);
+    --field-background: #ffffff;
+    --field-foreground: #1b262c;
+    --field-placeholder: color-mix(in srgb, #1b262c 45%, transparent);
+    --field-border: color-mix(in srgb, #0f4c75 14%, transparent);
 
-    --border: color-mix(in srgb, #60241e 12%, #e77b49 18%, #fff5f0 70%);
-    --separator: color-mix(in srgb, #60241e 10%, #fff5f0 90%);
-    --focus: #e77b49;
-    --link: #95271d;
+    --border: color-mix(in srgb, #0f4c75 12%, #bbe1fa 28%, #ffffff 60%);
+    --separator: color-mix(in srgb, #0f4c75 10%, #f5fafd 90%);
+    --focus: #3282b8;
+    --link: #0f4c75;
 
-    --segment: #fffaf8;
-    --segment-foreground: #60241e;
+    --segment: #ffffff;
+    --segment-foreground: #1b262c;
 
-    --success: #3d6b4f;
-    --success-foreground: #fff5f0;
-    --warning: #e77b49;
-    --warning-foreground: #60241e;
-    --danger: #95271d;
-    --danger-foreground: #fff5f0;
+    --success: #2f6b4f;
+    --success-foreground: #f5fafd;
+    --warning: #3282b8;
+    --warning-foreground: #1b262c;
+    --danger: #0f4c75;
+    --danger-foreground: #bbe1fa;
 
-    --accent-soft: color-mix(in srgb, #95271d 14%, transparent);
-    --accent-soft-foreground: #95271d;
-    --accent-soft-hover: color-mix(in srgb, #95271d 22%, transparent);
+    --accent-soft: color-mix(in srgb, #0f4c75 12%, transparent);
+    --accent-soft-foreground: #0f4c75;
+    --accent-soft-hover: color-mix(in srgb, #0f4c75 20%, transparent);
 
-    --accent-hover: color-mix(in srgb, #95271d 88%, #e77b49 12%);
+    --accent-hover: color-mix(in srgb, #0f4c75 85%, #3282b8 15%);
 
     --surface-shadow:
-      0 2px 4px 0 rgba(96, 36, 30, 0.06), 0 1px 2px 0 rgba(96, 36, 30, 0.07),
-      0 0 1px 0 rgba(96, 36, 30, 0.06);
+      0 2px 4px 0 rgba(27, 38, 44, 0.06), 0 1px 2px 0 rgba(15, 76, 117, 0.07),
+      0 0 1px 0 rgba(27, 38, 44, 0.06);
     --overlay-shadow:
-      0 2px 8px 0 rgba(96, 36, 30, 0.1), 0 14px 28px 0 rgba(96, 36, 30, 0.12);
+      0 2px 8px 0 rgba(27, 38, 44, 0.1), 0 14px 28px 0 rgba(15, 76, 117, 0.12);
   }
 }
 
@@ -80,5 +80,5 @@ body {
 }
 
 .bg-surface-secondary {
-  background: color-mix(in srgb, var(--surface) 88%, var(--palette-ember, #e77b49) 12%);
+  background: color-mix(in srgb, var(--surface) 88%, var(--palette-ice, #bbe1fa) 12%);
 }

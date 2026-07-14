@@ -83,7 +83,7 @@ export function BudgetClient() {
           {!data || data.budgets.length === 0 ? (
             <EmptyState message="Belum ada budget" />
           ) : (
-            <Table headers={["Nama", "Tahun", "Status", "Baris", "Total"]}>
+            <Table headers={["Nama", "Tahun", "Status", "Baris", "Total", "Aksi"]}>
               {data.budgets.map((b) => (
                 <tr key={b.id}>
                   <td className="px-3 py-2">{b.name}</td>
@@ -93,6 +93,29 @@ export function BudgetClient() {
                   </td>
                   <td className="px-3 py-2">{b.lineCount}</td>
                   <td className="px-3 py-2">{formatIdr(b.total)}</td>
+                  <td className="px-3 py-2">
+                    {b.status === "DRAFT" ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={mutation.isPending}
+                        onClick={() =>
+                          mutation.mutate({ action: "approve", id: b.id })
+                        }
+                      >
+                        Approve
+                      </Button>
+                    ) : (
+                      <a
+                        className="text-sm text-accent underline"
+                        href={`/api/erp/finance/budget?vsActual=${b.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Vs actual
+                      </a>
+                    )}
+                  </td>
                 </tr>
               ))}
             </Table>

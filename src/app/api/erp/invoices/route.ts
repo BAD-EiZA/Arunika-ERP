@@ -48,20 +48,35 @@ export async function POST(req: Request) {
     const body = (await req.json()) as {
       deliveryOrderId?: string;
       taxRate?: string | number;
+      currency?: string;
+      exchangeRate?: string | number;
+      installments?: number;
     };
-    const invoice = await issueInvoiceFromDelivery({
+    const result = await issueInvoiceFromDelivery({
       companyId: ctx.companyId,
       userId: ctx.user.id,
       deliveryOrderId: String(body.deliveryOrderId ?? ""),
       taxRate: body.taxRate ?? 11,
+      currency: body.currency,
+      exchangeRate: body.exchangeRate,
+      installments: body.installments,
     });
+    const list = Array.isArray(result) ? result : [result];
     return {
       invoice: {
-        id: invoice.id,
-        number: invoice.number,
-        total: invoice.total.toString(),
-        status: invoice.status,
+        id: list[0].id,
+        number: list[0].number,
+        total: list[0].total.toString(),
+        status: list[0].status,
       },
+      invoices: list.map((inv) => ({
+        id: inv.id,
+        number: inv.number,
+        total: inv.total.toString(),
+        status: inv.status,
+        installmentNo: inv.installmentNo,
+        installmentOf: inv.installmentOf,
+      })),
     };
   });
 }

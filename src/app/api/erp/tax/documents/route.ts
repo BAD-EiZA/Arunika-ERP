@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import {
   correctTaxDocument,
   createTaxDocument,
+  exportEfakturCsv,
   exportTaxPeriod,
 } from "@/server/services/tax";
 
@@ -37,7 +38,7 @@ export async function GET() {
 export async function POST(req: Request) {
   return withApiHandler(async () => {
     const body = (await req.json()) as {
-      action?: "create" | "correct" | "export";
+      action?: "create" | "correct" | "export" | "efaktur";
       id?: string;
       docType?: string;
       taxType?: "PPN" | "PPH21" | "PPH22" | "PPH23" | "PPH4_2" | "PPH26" | "OTHER";
@@ -52,6 +53,10 @@ export async function POST(req: Request) {
     if (body.action === "export") {
       const ctx = await requirePermission("tax_export:generate");
       return exportTaxPeriod(ctx.companyId, String(body.taxPeriod ?? ""));
+    }
+    if (body.action === "efaktur") {
+      const ctx = await requirePermission("tax_export:generate");
+      return exportEfakturCsv(ctx.companyId, String(body.taxPeriod ?? ""));
     }
 
     if (body.action === "correct") {

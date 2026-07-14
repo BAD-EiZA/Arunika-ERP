@@ -31,6 +31,7 @@ const DEFAULT_PREFIX: Record<string, string> = {
   POS: "POS",
   LEAD: "LEAD",
   OPP: "OPP",
+  EXP: "EXP",
 };
 
 export async function nextDocumentNumber(

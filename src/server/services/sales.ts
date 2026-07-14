@@ -60,6 +60,35 @@ function calcHeader(items: ReturnType<typeof mapItems>) {
   };
 }
 
+async function assertCustomerCreditLimit(
+  companyId: string,
+  customerId: string,
+  additional: ReturnType<typeof money>,
+) {
+  const customer = await prisma.customer.findFirst({
+    where: { id: customerId, companyId },
+  });
+  if (!customer) throw notFound("Pelanggan tidak ditemukan");
+  if (customer.creditLimit == null) return customer;
+
+  const open = await prisma.salesInvoice.aggregate({
+    where: {
+      companyId,
+      customerId,
+      status: { in: ["ISSUED", "PARTIALLY_PAID", "OVERDUE", "OPEN"] },
+      balance: { gt: 0 },
+    },
+    _sum: { balance: true },
+  });
+  const exposure = money(open._sum.balance ?? 0).plus(additional);
+  if (exposure.gt(money(customer.creditLimit))) {
+    throw conflict(
+      `Melebihi credit limit ${customer.creditLimit} (exposure ${exposure.toFixed(2)})`,
+    );
+  }
+  return customer;
+}
+
 export async function createSalesOrder(input: {
   companyId: string;
   userId: string;
@@ -71,6 +100,11 @@ export async function createSalesOrder(input: {
 }) {
   const items = mapItems(input.items);
   const header = calcHeader(items);
+  await assertCustomerCreditLimit(
+    input.companyId,
+    input.customerId,
+    money(header.total),
+  );
   return prisma.$transaction(async (tx) => {
     const number = await nextDocumentNumber(tx, input.companyId, "SO", input.branchId);
     const so = await tx.salesOrder.create({
@@ -101,6 +135,18 @@ export async function createSalesOrder(input: {
 }
 
 export async function approveSalesOrder(companyId: string, userId: string, id: string) {
+  const soPre = await prisma.salesOrder.findFirst({
+    where: { id, companyId },
+  });
+  if (!soPre) throw notFound("SO tidak ditemukan");
+  const { assertApprovalRole } = await import("@/server/services/approvals");
+  await assertApprovalRole({
+    companyId,
+    userId,
+    docType: "SALES_ORDER",
+    amount: soPre.total.toString(),
+  });
+
   return prisma.$transaction(async (tx) => {
     const so = await tx.salesOrder.findFirst({
       where: { id, companyId },
@@ -336,6 +382,10 @@ export async function issueInvoiceFromDelivery(input: {
   userId: string;
   deliveryOrderId: string;
   taxRate?: number | string;
+  currency?: string;
+  exchangeRate?: number | string;
+  /** Split into N equal installments (1 = single invoice). */
+  installments?: number;
 }) {
   return prisma.$transaction(async (tx) => {
     const delivery = await tx.deliveryOrder.findFirst({
@@ -370,61 +420,123 @@ export async function issueInvoiceFromDelivery(input: {
     const subtotal = sumMoney(lines.map((l) => qty(l.quantity).mul(money(l.unitPrice))));
     const taxAmount = sumMoney(lines.map((l) => l.taxAmount));
     const total = subtotal.plus(taxAmount);
-    const number = await nextDocumentNumber(tx, input.companyId, "INV");
-    const dueDate = new Date();
-    dueDate.setUTCDate(
-      dueDate.getUTCDate() + (delivery.salesOrder.paymentTermDays || 30),
+
+    await assertCustomerCreditLimit(
+      input.companyId,
+      delivery.customerId,
+      total,
     );
 
-    const invoice = await tx.salesInvoice.create({
-      data: {
-        companyId: input.companyId,
-        customerId: delivery.customerId,
-        salesOrderId: delivery.salesOrderId,
-        deliveryOrderId: delivery.id,
-        number,
-        status: "ISSUED",
-        dueDate,
-        paymentTermDays: delivery.salesOrder.paymentTermDays,
-        subtotal: toPrismaMoney(subtotal),
-        taxAmount: toPrismaMoney(taxAmount),
-        total: toPrismaMoney(total),
-        balance: toPrismaMoney(total),
-        issuedAt: new Date(),
-        items: { create: lines },
-      },
-      include: { items: true },
-    });
+    const parts = Math.max(1, Math.min(12, Math.floor(input.installments ?? 1)));
+    const currency = input.currency || "IDR";
+    const exchangeRate = money(input.exchangeRate ?? 1);
+    if (exchangeRate.lte(0)) throw validationError("Kurs harus > 0");
 
-    for (const item of invoice.items) {
-      if (!item.productId) continue;
-      const soItem = delivery.salesOrder.items.find(
-        (i) => i.productId === item.productId,
+    const invoices = [];
+    for (let i = 0; i < parts; i++) {
+      const isLast = i === parts - 1;
+      const share = isLast
+        ? total.minus(total.div(parts).toDecimalPlaces(2).mul(parts - 1))
+        : total.div(parts).toDecimalPlaces(2);
+      const shareSub = isLast
+        ? subtotal.minus(subtotal.div(parts).toDecimalPlaces(2).mul(parts - 1))
+        : subtotal.div(parts).toDecimalPlaces(2);
+      const shareTax = share.minus(shareSub);
+
+      const number = await nextDocumentNumber(tx, input.companyId, "INV");
+      const dueDate = new Date();
+      dueDate.setUTCDate(
+        dueDate.getUTCDate() +
+          (delivery.salesOrder.paymentTermDays || 30) * (i + 1),
       );
-      if (!soItem) continue;
-      await tx.salesOrderItem.update({
-        where: { id: soItem.id },
+
+      const invLines =
+        parts === 1
+          ? lines
+          : [
+              {
+                productId: null as string | null,
+                description: `Cicilan ${i + 1}/${parts} dari DO ${delivery.number}`,
+                quantity: toPrismaDecimal(qty(1)),
+                unitPrice: toPrismaMoney(shareSub),
+                taxAmount: toPrismaMoney(shareTax),
+                total: toPrismaMoney(share),
+              },
+            ];
+
+      const invoice = await tx.salesInvoice.create({
         data: {
-          quantityInvoiced: toPrismaDecimal(
-            qty(soItem.quantityInvoiced).plus(qty(item.quantity)),
-          ),
+          companyId: input.companyId,
+          customerId: delivery.customerId,
+          salesOrderId: delivery.salesOrderId,
+          deliveryOrderId: delivery.id,
+          number,
+          status: "ISSUED",
+          dueDate,
+          paymentTermDays: delivery.salesOrder.paymentTermDays,
+          currency,
+          exchangeRate: toPrismaMoney(exchangeRate),
+          subtotal: toPrismaMoney(shareSub),
+          taxAmount: toPrismaMoney(shareTax),
+          total: toPrismaMoney(share),
+          balance: toPrismaMoney(share),
+          installmentOf: parts > 1 ? parts : null,
+          installmentNo: parts > 1 ? i + 1 : null,
+          issuedAt: new Date(),
+          items: { create: invLines },
         },
+        include: { items: true },
       });
+
+      await postFromRule(tx, {
+        companyId: input.companyId,
+        sourceEvent: "sales_invoice.issue",
+        sourceDocType: "SalesInvoice",
+        sourceDocId: invoice.id,
+        description: `INV ${invoice.number}`,
+        amount: shareSub.toString(),
+        taxAmount: shareTax.toString(),
+        idempotencyKey: `je:inv:${invoice.id}`,
+        postedById: input.userId,
+      });
+
+      invoices.push(invoice);
     }
 
-    await postFromRule(tx, {
-      companyId: input.companyId,
-      sourceEvent: "sales_invoice.issue",
-      sourceDocType: "SalesInvoice",
-      sourceDocId: invoice.id,
-      description: `INV ${invoice.number}`,
-      amount: subtotal.toString(),
-      taxAmount: taxAmount.toString(),
-      idempotencyKey: `je:inv:${invoice.id}`,
-      postedById: input.userId,
-    });
+    if (parts === 1) {
+      for (const item of invoices[0].items) {
+        if (!item.productId) continue;
+        const soItem = delivery.salesOrder.items.find(
+          (i) => i.productId === item.productId,
+        );
+        if (!soItem) continue;
+        await tx.salesOrderItem.update({
+          where: { id: soItem.id },
+          data: {
+            quantityInvoiced: toPrismaDecimal(
+              qty(soItem.quantityInvoiced).plus(qty(item.quantity)),
+            ),
+          },
+        });
+      }
+    } else {
+      for (const soItem of delivery.salesOrder.items) {
+        const delivered = delivery.items.find(
+          (d) => d.productId === soItem.productId,
+        );
+        if (!delivered) continue;
+        await tx.salesOrderItem.update({
+          where: { id: soItem.id },
+          data: {
+            quantityInvoiced: toPrismaDecimal(
+              qty(soItem.quantityInvoiced).plus(qty(delivered.quantityDelivered)),
+            ),
+          },
+        });
+      }
+    }
 
-    return invoice;
+    return parts === 1 ? invoices[0] : invoices;
   });
 }
 

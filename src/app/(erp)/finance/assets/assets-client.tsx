@@ -30,6 +30,8 @@ type AssetsData = {
     accumulatedDep: string;
     bookValue: string;
     acquisitionDate: string;
+    isActive?: boolean;
+    disposedAt?: string | null;
   }>;
 };
 
@@ -113,16 +115,41 @@ export function AssetsClient() {
                     <td className="px-3 py-2">{formatIdr(a.bookValue)}</td>
                     <td className="px-3 py-2">{formatDateId(a.acquisitionDate)}</td>
                     <td className="px-3 py-2">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        disabled={mutation.isPending}
-                        onClick={() =>
-                          mutation.mutate({ action: "depreciate", id: a.id })
-                        }
-                      >
-                        Susut 1 bln
-                      </Button>
+                      <div className="flex flex-wrap gap-1">
+                        {a.isActive !== false && !a.disposedAt ? (
+                          <>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              disabled={mutation.isPending}
+                              onClick={() =>
+                                mutation.mutate({
+                                  action: "depreciate",
+                                  id: a.id,
+                                })
+                              }
+                            >
+                              Susut 1 bln
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              disabled={mutation.isPending}
+                              onClick={() =>
+                                mutation.mutate({
+                                  action: "dispose",
+                                  id: a.id,
+                                  disposeAmount: a.bookValue,
+                                })
+                              }
+                            >
+                              Dispose
+                            </Button>
+                          </>
+                        ) : (
+                          <span className="text-xs text-muted">Disposed</span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

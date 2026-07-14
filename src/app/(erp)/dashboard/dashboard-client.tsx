@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import {
-  AppAlert,
   Badge,
   Card,
   EmptyState,
@@ -10,15 +9,13 @@ import {
   Table,
   Button,
 } from "@/components/ui";
-import {
-  AppMeter,
-  AppModal,
-  AppPopover,
-  AppProgress,
-  AppListBox,
-  toast,
-} from "@/components/heroui-kit";
 import { MutationError, QueryBoundary } from "@/components/query-state";
+import {
+  ArApCompare,
+  DonutChart,
+  GroupedBarChart,
+  HorizontalBarChart,
+} from "@/components/dashboard-charts";
 import { useDashboardQuery } from "@/hooks/use-erp-queries";
 import { formatDateId } from "@/lib/dates";
 import { formatIdr, qty } from "@/lib/money";
@@ -77,17 +74,17 @@ export function DashboardClient() {
 
   return (
     <div className="space-y-6">
-      <div className="relative overflow-hidden rounded-2xl border border-border/70 bg-gradient-to-br from-[#60241E] via-[#95271D] to-[#E77B49] p-5 text-[#fff5f0] shadow-sm md:p-7">
-        <div className="pointer-events-none absolute -right-10 -top-10 size-40 rounded-full bg-[#E77B49]/25 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-12 left-1/3 size-48 rounded-full bg-[#B34A44]/20 blur-3xl" />
+      <div className="relative overflow-hidden rounded-2xl border border-border/70 bg-gradient-to-br from-[#1B262C] via-[#0F4C75] to-[#3282B8] p-5 text-[#BBE1FA] shadow-sm md:p-7">
+        <div className="pointer-events-none absolute -right-10 -top-10 size-40 rounded-full bg-[#BBE1FA]/20 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-12 left-1/3 size-48 rounded-full bg-[#3282B8]/25 blur-3xl" />
         <div className="relative mb-0 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-[#fff5f0] md:text-[1.7rem]">
+            <h1 className="text-2xl font-semibold tracking-tight text-[#BBE1FA] md:text-[1.7rem]">
               Dashboard
             </h1>
-            <p className="mt-1 max-w-2xl text-sm text-[#ffd5c4]">
+            <p className="mt-1 max-w-2xl text-sm text-[#BBE1FA]/80">
               {data
-                ? `Role ${data.roleCode} · ringkasan operasional real-time`
+                ? `Role ${data.roleCode} · ringkasan + chart real-time`
                 : "Memuat ringkasan perusahaan..."}
             </p>
           </div>
@@ -110,11 +107,6 @@ export function DashboardClient() {
       >
         {data ? (
           <>
-            <AppAlert
-              status="accent"
-              title="Ringkasan operasional"
-              description="Data real-time dari modul stok, penjualan, dan pembelian."
-            />
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               <StatCard label="Produk" value={data.productCount} />
               <StatCard label="Pelanggan" value={data.customerCount} />
@@ -122,60 +114,81 @@ export function DashboardClient() {
               <StatCard label="PO aktif" value={data.openPo} />
               <StatCard label="SO aktif" value={data.openSo} />
             </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <Card title="Kapasitas SO vs PO">
-                <AppProgress
-                  label="SO aktif (skala 20)"
-                  value={Math.min(100, data.openSo * 5)}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <StatCard
+                label="Total piutang (AR)"
+                value={formatIdr(data.arTotal ?? 0)}
+              />
+              <StatCard
+                label="Total utang (AP)"
+                value={formatIdr(data.apTotal ?? 0)}
+              />
+            </div>
+
+            {/* Charts */}
+            <div className="grid gap-4 xl:grid-cols-2">
+              <Card title="Penjualan vs pembelian (6 bln)">
+                <GroupedBarChart
+                  labels={data.charts.months}
+                  seriesA={data.charts.salesByMonth.map((x) => x.value)}
+                  seriesB={data.charts.purchaseByMonth.map((x) => x.value)}
                 />
-                <div className="mt-3">
-                  <AppMeter
-                    label="PO aktif (skala 20)"
-                    value={Math.min(100, data.openPo * 5)}
-                  />
-                </div>
               </Card>
-              <Card title="Aksi cepat HeroUI">
-                <div className="flex flex-wrap gap-2">
-                  <AppModal
-                    title="Tips dashboard"
-                    trigger={
-                      <Button type="button" variant="secondary">
-                        Buka modal
-                      </Button>
-                    }
-                  >
-                    <p className="text-sm text-muted">
-                      Gunakan menu kiri untuk modul, atau akses cepat di bawah.
-                    </p>
-                  </AppModal>
-                  <AppPopover
-                    title="Info"
-                    trigger={
-                      <Button type="button" variant="ghost">
-                        Popover
-                      </Button>
-                    }
-                  >
-                    Stok, piutang, dan utang di-refresh via TanStack Query.
-                  </AppPopover>
-                  <Button
-                    type="button"
-                    variant="primary"
-                    onClick={() => toast.success("Toast HeroUI aktif")}
-                  >
-                    Toast
-                  </Button>
-                </div>
-                <div className="mt-3">
-                  <AppListBox
-                    aria-label="Shortcut"
-                    items={QUICK.map((q) => ({ id: q.href, label: q.label }))}
-                    onAction={(id) => {
-                      window.location.href = id;
-                    }}
+
+              <Card title="Piutang vs utang">
+                <ArApCompare
+                  ar={Number(data.arTotal ?? 0)}
+                  ap={Number(data.apTotal ?? 0)}
+                />
+              </Card>
+
+              <Card title="Status SO (6 bln)">
+                {data.charts.soStatus.length === 0 ? (
+                  <EmptyState message="Belum ada SO" />
+                ) : (
+                  <DonutChart
+                    items={data.charts.soStatus}
+                    centerLabel="SO"
+                    centerValue={String(
+                      data.charts.soStatus.reduce((a, b) => a + b.value, 0),
+                    )}
                   />
-                </div>
+                )}
+              </Card>
+
+              <Card title="Status PO (6 bln)">
+                {data.charts.poStatus.length === 0 ? (
+                  <EmptyState message="Belum ada PO" />
+                ) : (
+                  <DonutChart
+                    items={data.charts.poStatus}
+                    centerLabel="PO"
+                    centerValue={String(
+                      data.charts.poStatus.reduce((a, b) => a + b.value, 0),
+                    )}
+                  />
+                )}
+              </Card>
+
+              <Card title="Nilai stok (top SKU)">
+                <HorizontalBarChart
+                  items={data.charts.stockValue.map((s) => ({
+                    label: s.label,
+                    value: s.value,
+                    sub: `qty ${s.qty}`,
+                  }))}
+                />
+              </Card>
+
+              <Card title="Komposisi master">
+                <DonutChart
+                  items={data.charts.mix}
+                  centerLabel="entitas"
+                  centerValue={String(
+                    data.charts.mix.reduce((a, b) => a + b.value, 0),
+                  )}
+                />
               </Card>
             </div>
 

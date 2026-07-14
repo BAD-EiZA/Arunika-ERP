@@ -240,6 +240,10 @@ model Company {
   warehouseBins     WarehouseBin[]
   stockBinBalances  StockBinBalance[]
   aiInsights        AiInsight[]
+  expenses          ExpenseClaim[]
+  recurringJournals RecurringJournal[]
+  recurringInvoices RecurringInvoice[]
+  bankFeeds         BankFeed[]
 }
 
 model Membership {
@@ -453,7 +457,8 @@ model CostCenter {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  journalLines JournalLine[]
 
   @@unique([companyId, code])
 }
@@ -583,11 +588,12 @@ model Customer {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  company          Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  salesOrders      SalesOrder[]
-  deliveryOrders   DeliveryOrder[]
-  salesInvoices    SalesInvoice[]
-  customerPayments CustomerPayment[]
+  company           Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  salesOrders       SalesOrder[]
+  deliveryOrders    DeliveryOrder[]
+  salesInvoices     SalesInvoice[]
+  customerPayments  CustomerPayment[]
+  recurringInvoices RecurringInvoice[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -1060,6 +1066,8 @@ model SupplierBill {
   status            DocumentStatus @default(DRAFT)
   invoiceDate       DateTime       @default(now())
   dueDate           DateTime?
+  currency          String         @default("IDR")
+  exchangeRate      Decimal        @default(1) @db.Decimal(18, 8)
   subtotal          Decimal        @default(0) @db.Decimal(18, 2)
   taxAmount         Decimal        @default(0) @db.Decimal(18, 2)
   discountAmount    Decimal        @default(0) @db.Decimal(18, 2)
@@ -1080,6 +1088,7 @@ model SupplierBill {
   @@unique([companyId, number])
   @@index([companyId])
   @@index([supplierId])
+  @@index([dueDate])
 }
 
 model SupplierBillItem {
@@ -1297,6 +1306,8 @@ model SalesInvoice {
   invoiceDate     DateTime       @default(now())
   dueDate         DateTime?
   paymentTermDays Int            @default(30)
+  currency        String         @default("IDR")
+  exchangeRate    Decimal        @default(1) @db.Decimal(18, 8)
   subtotal        Decimal        @default(0) @db.Decimal(18, 2)
   discountAmount  Decimal        @default(0) @db.Decimal(18, 2)
   taxAmount       Decimal        @default(0) @db.Decimal(18, 2)
@@ -1304,6 +1315,8 @@ model SalesInvoice {
   amountPaid      Decimal        @default(0) @db.Decimal(18, 2)
   balance         Decimal        @default(0) @db.Decimal(18, 2)
   notes           String?
+  installmentOf   Int?
+  installmentNo   Int?
   issuedAt        DateTime?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
@@ -1318,6 +1331,7 @@ model SalesInvoice {
   @@unique([companyId, number])
   @@index([companyId])
   @@index([customerId])
+  @@index([dueDate])
 }
 
 model SalesInvoiceItem {
@@ -1463,19 +1477,23 @@ model Journal {
 }
 
 model JournalLine {
-  id          String  @id @default(cuid())
-  journalId   String
-  accountId   String
-  debit       Decimal @default(0) @db.Decimal(18, 2)
-  credit      Decimal @default(0) @db.Decimal(18, 2)
-  description String?
-  taxCodeId   String?
+  id           String  @id @default(cuid())
+  journalId    String
+  accountId    String
+  debit        Decimal @default(0) @db.Decimal(18, 2)
+  credit       Decimal @default(0) @db.Decimal(18, 2)
+  description  String?
+  taxCodeId    String?
+  costCenterId String?
+  tag          String?
 
-  journal Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
-  account Account @relation(fields: [accountId], references: [id])
+  journal    Journal     @relation(fields: [journalId], references: [id], onDelete: Cascade)
+  account    Account     @relation(fields: [accountId], references: [id])
+  costCenter CostCenter? @relation(fields: [costCenterId], references: [id])
 
   @@index([journalId])
   @@index([accountId])
+  @@index([costCenterId])
 }
 
 model PostingRule {
@@ -1526,6 +1544,7 @@ model BankAccount {
 
   company    Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
   statements BankStatement[]
+  feeds      BankFeed[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -1587,26 +1606,52 @@ model BudgetLine {
 }
 
 model FixedAsset {
-  id                 String   @id @default(cuid())
+  id                 String    @id @default(cuid())
   companyId          String
   code               String
   name               String
   category           String?
   acquisitionDate    DateTime
-  acquisitionCost    Decimal  @db.Decimal(18, 2)
-  residualValue      Decimal  @default(0) @db.Decimal(18, 2)
+  acquisitionCost    Decimal   @db.Decimal(18, 2)
+  residualValue      Decimal   @default(0) @db.Decimal(18, 2)
   usefulLifeMonths   Int
-  depreciationMethod String   @default("STRAIGHT_LINE")
-  accumulatedDep     Decimal  @default(0) @db.Decimal(18, 2)
-  bookValue          Decimal  @db.Decimal(18, 2)
-  isActive           Boolean  @default(true)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  depreciationMethod String    @default("STRAIGHT_LINE")
+  accumulatedDep     Decimal   @default(0) @db.Decimal(18, 2)
+  bookValue          Decimal   @db.Decimal(18, 2)
+  isActive           Boolean   @default(true)
+  disposedAt         DateTime?
+  disposeAmount      Decimal?  @db.Decimal(18, 2)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@unique([companyId, code])
   @@index([companyId])
+}
+
+model ExpenseClaim {
+  id          String         @id @default(cuid())
+  companyId   String
+  number      String
+  title       String
+  accountCode String         @default("6100")
+  amount      Decimal        @db.Decimal(18, 2)
+  taxAmount   Decimal        @default(0) @db.Decimal(18, 2)
+  expenseDate DateTime
+  status      DocumentStatus @default(DRAFT)
+  notes       String?
+  employeeId  String?
+  createdById String?
+  postedAt    DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
+  @@index([companyId])
+  @@index([status])
 }
 
 // ─── Tax Indonesia ───────────────────────────────────────
@@ -2540,6 +2585,72 @@ model AiInsight {
 
   @@index([companyId, insightType])
   @@index([createdAt])
+}
+
+// ─── Recurring / Bank feed ───────────────────────────────
+
+model RecurringJournal {
+  id          String    @id @default(cuid())
+  companyId   String
+  name        String
+  description String?
+  frequency   String    @default("MONTHLY")
+  nextRunAt   DateTime
+  endDate     DateTime?
+  isActive    Boolean   @default(true)
+  currency    String    @default("IDR")
+  exchangeRate Decimal  @default(1) @db.Decimal(18, 8)
+  lines       Json
+  lastRunAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, nextRunAt])
+}
+
+model RecurringInvoice {
+  id              String    @id @default(cuid())
+  companyId       String
+  customerId      String
+  name            String
+  frequency       String    @default("MONTHLY")
+  nextRunAt       DateTime
+  endDate         DateTime?
+  isActive        Boolean   @default(true)
+  paymentTermDays Int       @default(30)
+  currency        String    @default("IDR")
+  exchangeRate    Decimal   @default(1) @db.Decimal(18, 8)
+  taxRate         Decimal   @default(0) @db.Decimal(8, 4)
+  lines           Json
+  lastRunAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  company  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@index([companyId, nextRunAt])
+}
+
+model BankFeed {
+  id            String    @id @default(cuid())
+  companyId     String
+  bankAccountId String
+  provider      String    @default("CSV")
+  externalRef   String?
+  lastSyncAt    DateTime?
+  isActive      Boolean   @default(true)
+  meta          Json?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  company     Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, bankAccountId, provider])
+  @@index([companyId])
 }
 
 
