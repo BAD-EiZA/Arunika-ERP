@@ -1,6 +1,5 @@
 /**
- * HeroUI v3 surface — re-export for app usage.
- * Compound APIs: Component.Root / .Trigger / etc.
+ * HeroUI v3 re-exports. Prefer simple wrappers in @/components/ui for forms.
  */
 "use client";
 

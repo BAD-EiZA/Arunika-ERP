@@ -14,19 +14,13 @@ import {
   Button as HeroButton,
   Card as HeroCard,
   Chip,
-  EmptyState as HeroEmptyState,
-  ErrorMessage,
   Input as HeroInput,
   Label as HeroLabel,
-  Pagination,
   Skeleton,
   Spinner,
   TextArea as HeroTextArea,
-  toast,
 } from "@heroui/react";
 import { cn } from "@/lib/cn";
-
-export { toast };
 
 export function PageHeader({
   title,
@@ -165,7 +159,6 @@ export function Input({
   );
 }
 
-/** Native select — works with formToObject / FormData. */
 export function Select({
   className,
   children,
@@ -234,12 +227,13 @@ export function Field({
     <div className="space-y-1.5">
       <Label>{label}</Label>
       {children}
-      {error ? <ErrorMessage>{error}</ErrorMessage> : null}
+      {error ? (
+        <p className="text-xs text-danger">{error}</p>
+      ) : null}
     </div>
   );
 }
 
-/** Status chip (soft). */
 export function Badge({
   children,
   tone = "default",
@@ -290,9 +284,9 @@ export function Table({
 
 export function EmptyState({ message }: { message: string }) {
   return (
-    <HeroEmptyState className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-muted">
+    <div className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-muted">
       {message}
-    </HeroEmptyState>
+    </div>
   );
 }
 
@@ -319,20 +313,6 @@ export function FormGrid({ children }: { children: ReactNode }) {
   return <div className="grid gap-3 sm:grid-cols-2">{children}</div>;
 }
 
-function pageWindow(page: number, totalPages: number, max = 5) {
-  if (totalPages <= max) {
-    return Array.from({ length: totalPages }, (_, i) => i + 1);
-  }
-  const half = Math.floor(max / 2);
-  let start = Math.max(1, page - half);
-  let end = start + max - 1;
-  if (end > totalPages) {
-    end = totalPages;
-    start = Math.max(1, end - max + 1);
-  }
-  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
-}
-
 export function PaginationBar({
   page,
   totalPages,
@@ -351,79 +331,34 @@ export function PaginationBar({
   if (total === 0) return null;
   const from = (page - 1) * (limit ?? 20) + 1;
   const to = Math.min(page * (limit ?? 20), total);
-  const pages = pageWindow(page, totalPages);
 
   return (
-    <Pagination className="mt-3 flex flex-col gap-2 border-t border-border/70 pt-3 sm:flex-row sm:items-center sm:justify-between">
-      <Pagination.Summary className="text-xs text-muted">
+    <div className="mt-3 flex flex-col gap-2 border-t border-border/70 pt-3 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-xs text-muted">
         Menampilkan {from}–{to} dari {total}
-      </Pagination.Summary>
-      <Pagination.Content>
-        <Pagination.Item>
-          <Pagination.Previous
-            isDisabled={disabled || page <= 1}
-            onPress={() => onPageChange(page - 1)}
-          >
-            <Pagination.PreviousIcon />
-            Sebelumnya
-          </Pagination.Previous>
-        </Pagination.Item>
-        {pages[0] > 1 ? (
-          <>
-            <Pagination.Item>
-              <Pagination.Link
-                isActive={page === 1}
-                onPress={() => onPageChange(1)}
-              >
-                1
-              </Pagination.Link>
-            </Pagination.Item>
-            {pages[0] > 2 ? (
-              <Pagination.Item>
-                <Pagination.Ellipsis />
-              </Pagination.Item>
-            ) : null}
-          </>
-        ) : null}
-        {pages.map((p) => (
-          <Pagination.Item key={p}>
-            <Pagination.Link
-              isActive={p === page}
-              isDisabled={disabled}
-              onPress={() => onPageChange(p)}
-            >
-              {p}
-            </Pagination.Link>
-          </Pagination.Item>
-        ))}
-        {pages[pages.length - 1] < totalPages ? (
-          <>
-            {pages[pages.length - 1] < totalPages - 1 ? (
-              <Pagination.Item>
-                <Pagination.Ellipsis />
-              </Pagination.Item>
-            ) : null}
-            <Pagination.Item>
-              <Pagination.Link
-                isActive={page === totalPages}
-                onPress={() => onPageChange(totalPages)}
-              >
-                {totalPages}
-              </Pagination.Link>
-            </Pagination.Item>
-          </>
-        ) : null}
-        <Pagination.Item>
-          <Pagination.Next
-            isDisabled={disabled || page >= totalPages}
-            onPress={() => onPageChange(page + 1)}
-          >
-            Berikutnya
-            <Pagination.NextIcon />
-          </Pagination.Next>
-        </Pagination.Item>
-      </Pagination.Content>
-    </Pagination>
+      </p>
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={disabled || page <= 1}
+          onClick={() => onPageChange(page - 1)}
+        >
+          Sebelumnya
+        </Button>
+        <span className="min-w-[5.5rem] text-center text-xs font-medium text-foreground">
+          {page} / {totalPages}
+        </span>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={disabled || page >= totalPages}
+          onClick={() => onPageChange(page + 1)}
+        >
+          Berikutnya
+        </Button>
+      </div>
+    </div>
   );
 }
 
