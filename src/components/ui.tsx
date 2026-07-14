@@ -14,13 +14,16 @@ import {
   Button as HeroButton,
   Card as HeroCard,
   Chip,
+  Form as HeroForm,
   Input as HeroInput,
   Label as HeroLabel,
   Skeleton,
   Spinner,
+  Table as HeroTable,
   TextArea as HeroTextArea,
 } from "@heroui/react";
 import { cn } from "@/lib/cn";
+import { HeroPaginationBar } from "@/components/heroui-kit";
 
 export function PageHeader({
   title,
@@ -265,20 +268,43 @@ export function Table({
   children: ReactNode;
 }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
-      <table className="min-w-full text-left text-sm">
-        <thead className="border-b border-border bg-surface text-xs uppercase tracking-wide text-muted">
-          <tr>
-            {headers.map((h) => (
-              <th key={h} className="px-3 py-2.5 font-medium">
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border bg-background">{children}</tbody>
-      </table>
-    </div>
+    <HeroTable className="w-full" variant="primary">
+      <HeroTable.ScrollContainer>
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-border bg-surface text-xs uppercase tracking-wide text-muted">
+              <tr>
+                {headers.map((h) => (
+                  <th key={h} className="px-3 py-2.5 font-medium">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border bg-background">
+              {children}
+            </tbody>
+          </table>
+        </div>
+      </HeroTable.ScrollContainer>
+    </HeroTable>
+  );
+}
+
+/** HeroUI Form — use when not relying on native FormData quirks. */
+export function Form({
+  children,
+  className,
+  onSubmit,
+}: {
+  children: ReactNode;
+  className?: string;
+  onSubmit?: React.FormEventHandler<HTMLFormElement>;
+}) {
+  return (
+    <HeroForm className={cn("space-y-3", className)} onSubmit={onSubmit as never}>
+      {children}
+    </HeroForm>
   );
 }
 
@@ -313,14 +339,7 @@ export function FormGrid({ children }: { children: ReactNode }) {
   return <div className="grid gap-3 sm:grid-cols-2">{children}</div>;
 }
 
-export function PaginationBar({
-  page,
-  totalPages,
-  total,
-  limit,
-  onPageChange,
-  disabled,
-}: {
+export function PaginationBar(props: {
   page: number;
   totalPages: number;
   total: number;
@@ -328,38 +347,7 @@ export function PaginationBar({
   onPageChange: (page: number) => void;
   disabled?: boolean;
 }) {
-  if (total === 0) return null;
-  const from = (page - 1) * (limit ?? 20) + 1;
-  const to = Math.min(page * (limit ?? 20), total);
-
-  return (
-    <div className="mt-3 flex flex-col gap-2 border-t border-border/70 pt-3 sm:flex-row sm:items-center sm:justify-between">
-      <p className="text-xs text-muted">
-        Menampilkan {from}–{to} dari {total}
-      </p>
-      <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={disabled || page <= 1}
-          onClick={() => onPageChange(page - 1)}
-        >
-          Sebelumnya
-        </Button>
-        <span className="min-w-[5.5rem] text-center text-xs font-medium text-foreground">
-          {page} / {totalPages}
-        </span>
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={disabled || page >= totalPages}
-          onClick={() => onPageChange(page + 1)}
-        >
-          Berikutnya
-        </Button>
-      </div>
-    </div>
-  );
+  return <HeroPaginationBar {...props} />;
 }
 
 export function AppAlert({

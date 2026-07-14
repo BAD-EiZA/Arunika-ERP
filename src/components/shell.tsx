@@ -41,6 +41,7 @@ import {
 import { cn } from "@/lib/cn";
 import { actionSwitchCompany } from "@/app/actions";
 import { Button, Select, UserAvatar } from "@/components/ui";
+import { AppDropdown, toast } from "@/components/heroui-kit";
 
 type NavItem = {
   href: string;
@@ -496,6 +497,36 @@ export function AppShell({
                     AI
                   </HeroButton>
                 </Link>
+                <div className="hidden lg:block">
+                  <AppDropdown
+                    label={
+                      <HeroButton variant="ghost" size="sm">
+                        Tools
+                      </HeroButton>
+                    }
+                    items={[
+                      {
+                        key: "import",
+                        label: "Import CSV",
+                        onAction: () => {
+                          window.location.href = "/import";
+                        },
+                      },
+                      {
+                        key: "reports",
+                        label: "Laporan FS",
+                        onAction: () => {
+                          window.location.href = "/reports";
+                        },
+                      },
+                      {
+                        key: "ping",
+                        label: "Toast uji",
+                        onAction: () => toast.info("Shell dropdown OK"),
+                      },
+                    ]}
+                  />
+                </div>
                 {companies.length > 1 ? (
                   <form
                     action={actionSwitchCompany}

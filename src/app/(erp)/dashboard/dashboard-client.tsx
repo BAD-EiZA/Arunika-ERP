@@ -10,6 +10,14 @@ import {
   Table,
   Button,
 } from "@/components/ui";
+import {
+  AppMeter,
+  AppModal,
+  AppPopover,
+  AppProgress,
+  AppListBox,
+  toast,
+} from "@/components/heroui-kit";
 import { MutationError, QueryBoundary } from "@/components/query-state";
 import { useDashboardQuery } from "@/hooks/use-erp-queries";
 import { formatDateId } from "@/lib/dates";
@@ -113,6 +121,62 @@ export function DashboardClient() {
               <StatCard label="Pemasok" value={data.supplierCount} />
               <StatCard label="PO aktif" value={data.openPo} />
               <StatCard label="SO aktif" value={data.openSo} />
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Card title="Kapasitas SO vs PO">
+                <AppProgress
+                  label="SO aktif (skala 20)"
+                  value={Math.min(100, data.openSo * 5)}
+                />
+                <div className="mt-3">
+                  <AppMeter
+                    label="PO aktif (skala 20)"
+                    value={Math.min(100, data.openPo * 5)}
+                  />
+                </div>
+              </Card>
+              <Card title="Aksi cepat HeroUI">
+                <div className="flex flex-wrap gap-2">
+                  <AppModal
+                    title="Tips dashboard"
+                    trigger={
+                      <Button type="button" variant="secondary">
+                        Buka modal
+                      </Button>
+                    }
+                  >
+                    <p className="text-sm text-muted">
+                      Gunakan menu kiri untuk modul, atau akses cepat di bawah.
+                    </p>
+                  </AppModal>
+                  <AppPopover
+                    title="Info"
+                    trigger={
+                      <Button type="button" variant="ghost">
+                        Popover
+                      </Button>
+                    }
+                  >
+                    Stok, piutang, dan utang di-refresh via TanStack Query.
+                  </AppPopover>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    onClick={() => toast.success("Toast HeroUI aktif")}
+                  >
+                    Toast
+                  </Button>
+                </div>
+                <div className="mt-3">
+                  <AppListBox
+                    aria-label="Shortcut"
+                    items={QUICK.map((q) => ({ id: q.href, label: q.label }))}
+                    onAction={(id) => {
+                      window.location.href = id;
+                    }}
+                  />
+                </div>
+              </Card>
             </div>
 
             <div>

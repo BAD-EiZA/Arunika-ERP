@@ -1,5 +1,5 @@
 /**
- * HeroUI v3 re-exports. Prefer simple wrappers in @/components/ui for forms.
+ * HeroUI v3 — raw re-exports + app wrappers.
  */
 "use client";
 
@@ -40,3 +40,5 @@ export {
   Label,
   EmptyState as HeroEmptyState,
 } from "@heroui/react";
+
+export * from "@/components/heroui-kit";

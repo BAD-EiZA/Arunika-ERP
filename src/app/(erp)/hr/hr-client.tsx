@@ -14,6 +14,14 @@ import {
   Table,
 } from "@/components/ui";
 import { MutationError, QueryBoundary } from "@/components/query-state";
+import {
+  AppCheckbox,
+  AppDatePicker,
+  AppFieldset,
+  AppInputGroup,
+  AppTabs,
+  toast,
+} from "@/components/heroui-kit";
 import { useHrMutation, useHrQuery } from "@/hooks/use-erp-queries";
 import { useClientPage } from "@/hooks/use-client-page";
 import { formToObject } from "@/lib/api-client";
@@ -66,81 +74,116 @@ export function HrClient() {
       >
         {data ? (
           <>
-            <div className="grid gap-4 xl:grid-cols-2">
-              <Card title="Tambah karyawan">
-                <form
-                  className="space-y-3"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    mutation.mutate({
-                      action: "employee",
-                      ...formToObject(e.currentTarget),
-                    });
-                  }}
-                >
-                  <FormGrid>
-                    <Field label="Kode">
-                      <Input name="code" required />
-                    </Field>
-                    <Field label="Nama">
-                      <Input name="name" required />
-                    </Field>
-                    <Field label="Email">
-                      <Input name="email" type="email" />
-                    </Field>
-                    <Field label="Posisi">
-                      <Input name="position" />
-                    </Field>
-                    <Field label="Gaji pokok">
-                      <Input name="baseSalary" type="number" step="0.01" defaultValue="0" />
-                    </Field>
-                  </FormGrid>
-                  <MutationError error={mutation.error} />
-                  <Button type="submit" disabled={mutation.isPending}>
-                    Simpan
-                  </Button>
-                </form>
-              </Card>
-              <Card title="Absensi">
-                <form
-                  className="space-y-3"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    mutation.mutate({
-                      action: "attendance",
-                      ...formToObject(e.currentTarget),
-                    });
-                  }}
-                >
-                  <FormGrid>
-                    <Field label="Karyawan">
-                      <Select name="employeeId" required>
-                        <option value="">Pilih</option>
-                        {data.employees.map((e) => (
-                          <option key={e.id} value={e.id}>
-                            {e.code} — {e.name}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                    <Field label="Tanggal">
-                      <Input name="workDate" type="date" required />
-                    </Field>
-                    <Field label="Status">
-                      <Select name="status" defaultValue="PRESENT">
-                        <option value="PRESENT">Present</option>
-                        <option value="ABSENT">Absent</option>
-                        <option value="LEAVE">Leave</option>
-                      </Select>
-                    </Field>
-                  </FormGrid>
-                  <Button type="submit" variant="secondary" disabled={mutation.isPending}>
-                    Catat absensi
-                  </Button>
-                </form>
-              </Card>
-            </div>
-
+            <AppTabs
+              items={[
+                {
+                  id: "forms",
+                  title: "Input",
+                  content: (
+                    <div className="grid gap-4 xl:grid-cols-2">
+                      <Card title="Tambah karyawan">
+                        <form
+                          className="space-y-3"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            mutation.mutate(
+                              {
+                                action: "employee",
+                                ...formToObject(e.currentTarget),
+                              },
+                              {
+                                onSuccess: () =>
+                                  toast.success("Karyawan disimpan"),
+                              },
+                            );
+                          }}
+                        >
+                          <AppFieldset legend="Identitas">
+                            <FormGrid>
+                              <Field label="Kode">
+                                <Input name="code" required />
+                              </Field>
+                              <Field label="Nama">
+                                <Input name="name" required />
+                              </Field>
+                              <Field label="Email">
+                                <Input name="email" type="email" />
+                              </Field>
+                              <Field label="Posisi">
+                                <Input name="position" />
+                              </Field>
+                            </FormGrid>
+                          </AppFieldset>
+                          <AppInputGroup
+                            label="Gaji pokok"
+                            name="baseSalary"
+                            prefix="Rp"
+                            type="number"
+                            defaultValue="0"
+                          />
+                          <AppCheckbox name="isActive" defaultSelected>
+                            Aktif
+                          </AppCheckbox>
+                          <MutationError error={mutation.error} />
+                          <Button type="submit" disabled={mutation.isPending}>
+                            Simpan
+                          </Button>
+                        </form>
+                      </Card>
+                      <Card title="Absensi">
+                        <form
+                          className="space-y-3"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            mutation.mutate(
+                              {
+                                action: "attendance",
+                                ...formToObject(e.currentTarget),
+                              },
+                              {
+                                onSuccess: () =>
+                                  toast.success("Absensi dicatat"),
+                              },
+                            );
+                          }}
+                        >
+                          <FormGrid>
+                            <Field label="Karyawan">
+                              <Select name="employeeId" required>
+                                <option value="">Pilih</option>
+                                {data.employees.map((e) => (
+                                  <option key={e.id} value={e.id}>
+                                    {e.code} — {e.name}
+                                  </option>
+                                ))}
+                              </Select>
+                            </Field>
+                            <AppDatePicker label="Tanggal" name="workDate" />
+                            <Field label="Status">
+                              <Select name="status" defaultValue="PRESENT">
+                                <option value="PRESENT">Present</option>
+                                <option value="ABSENT">Absent</option>
+                                <option value="LEAVE">Leave</option>
+                              </Select>
+                            </Field>
+                          </FormGrid>
+                          <Button
+                            type="submit"
+                            variant="secondary"
+                            disabled={mutation.isPending}
+                          >
+                            Catat absensi
+                          </Button>
+                        </form>
+                      </Card>
+                    </div>
+                  ),
+                },
+                {
+                  id: "lists",
+                  title: "Daftar",
+                  content: (
+                    <>
             <Card title={`Karyawan (${employeesPage.total})`}>
               {employeesPage.total === 0 ? (
                 <EmptyState message="Belum ada karyawan" />
@@ -284,6 +327,11 @@ export function HrClient() {
                 )}
               </Card>
             </div>
+                    </>
+                  ),
+                },
+              ]}
+            />
           </>
         ) : null}
       </QueryBoundary>

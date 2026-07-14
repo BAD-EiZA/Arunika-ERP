@@ -20,6 +20,12 @@ import {
   useCreateProductMutation,
   useProductsQuery,
 } from "@/hooks/use-erp-queries";
+import {
+  AppComboBox,
+  AppDropdown,
+  AppNumberField,
+  toast,
+} from "@/components/heroui-kit";
 import { formToObject } from "@/lib/api-client";
 import { formatIdr } from "@/lib/money";
 
@@ -63,6 +69,7 @@ export function ProductsClient() {
                       onSuccess: () => {
                         e.currentTarget.reset();
                         setPage(1);
+                        toast.success("Produk disimpan");
                       },
                     });
                   }}
@@ -165,13 +172,30 @@ export function ProductsClient() {
               </Card>
             </div>
 
+            <Card title="Cari cepat (ComboBox)">
+              <AppComboBox
+                label="Produk di halaman ini"
+                items={data.products.map((p) => ({
+                  id: p.id,
+                  label: `${p.sku} — ${p.name}`,
+                }))}
+                onSelectionChange={(id) => {
+                  const p = data.products.find((x) => x.id === id);
+                  if (p) toast.info(`Dipilih: ${p.sku}`);
+                }}
+              />
+              <div className="mt-3">
+                <AppNumberField label="Contoh qty (NumberField)" defaultValue={1} min={0} />
+              </div>
+            </Card>
+
             <Card title={`Daftar produk (${data.total})`}>
               {data.products.length === 0 ? (
                 <EmptyState message="Belum ada produk" />
               ) : (
                 <>
                   <Table
-                    headers={["SKU", "Nama", "Satuan", "Beli", "Jual", "Status"]}
+                    headers={["SKU", "Nama", "Satuan", "Beli", "Jual", "Status", "Aksi"]}
                   >
                     {data.products.map((p) => (
                       <tr key={p.id}>
@@ -186,6 +210,30 @@ export function ProductsClient() {
                           <Badge tone={p.isArchived ? "danger" : "success"}>
                             {p.isArchived ? "Arsip" : p.type}
                           </Badge>
+                        </td>
+                        <td className="px-3 py-2">
+                          <AppDropdown
+                            label={
+                              <Button type="button" variant="ghost">
+                                ⋯
+                              </Button>
+                            }
+                            items={[
+                              {
+                                key: "copy",
+                                label: "Salin SKU",
+                                onAction: () => {
+                                  void navigator.clipboard?.writeText(p.sku);
+                                  toast.success(`SKU ${p.sku} disalin`);
+                                },
+                              },
+                              {
+                                key: "info",
+                                label: "Detail",
+                                onAction: () => toast.info(p.name),
+                              },
+                            ]}
+                          />
                         </td>
                       </tr>
                     ))}
