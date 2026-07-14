@@ -328,7 +328,7 @@ export async function postDeliveryOrder(input: {
     });
 
     return delivery;
-  });
+  }, { maxWait: 15000, timeout: 60000 });
 }
 
 export async function issueInvoiceFromDelivery(input: {

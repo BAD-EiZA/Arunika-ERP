@@ -1,17 +1,30 @@
 import { requirePermission, requireTenant } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
+import { pageMeta, parsePageParams } from "@/lib/pagination";
 import { createSupplier } from "@/server/services/master-data";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
   return withApiHandler(async () => {
     const ctx = await requireTenant();
-    const suppliers = await prisma.supplier.findMany({
-      where: { companyId: ctx.companyId },
-      orderBy: { createdAt: "desc" },
-    });
+    const { searchParams } = new URL(req.url);
+    const { page, limit, skip } = parsePageParams(searchParams);
+    const where = { companyId: ctx.companyId };
+
+    const [total, suppliers] = await Promise.all([
+      prisma.supplier.count({ where }),
+      prisma.supplier.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+    ]);
+
+    const meta = pageMeta(total, page, limit);
+
     return {
       suppliers: suppliers.map((s) => ({
         id: s.id,
@@ -20,6 +33,10 @@ export async function GET() {
         email: s.email,
         phone: s.phone,
       })),
+      page: meta.page,
+      limit: meta.limit,
+      total: meta.total,
+      totalPages: meta.totalPages,
     };
   });
 }

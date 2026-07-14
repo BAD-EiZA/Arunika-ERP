@@ -9,6 +9,7 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
@@ -17,6 +18,7 @@ import {
   useInvoicesQuery,
   useIssueInvoiceMutation,
 } from "@/hooks/use-erp-queries";
+import { useClientPage } from "@/hooks/use-client-page";
 import { formatDateId } from "@/lib/dates";
 import { formatIdr } from "@/lib/money";
 
@@ -24,6 +26,7 @@ export function InvoicesClient() {
   const query = useInvoicesQuery();
   const mutation = useIssueInvoiceMutation();
   const data = query.data;
+  const invoicesPage = useClientPage(data?.invoices ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -79,10 +82,11 @@ export function InvoicesClient() {
               )}
             </Card>
 
-            <Card title="Daftar invoice">
-              {data.invoices.length === 0 ? (
+            <Card title={`Daftar invoice (${invoicesPage.total})`}>
+              {invoicesPage.total === 0 ? (
                 <EmptyState message="Belum ada invoice" />
               ) : (
+                <>
                 <Table
                   headers={[
                     "Nomor",
@@ -93,7 +97,7 @@ export function InvoicesClient() {
                     "Jatuh tempo",
                   ]}
                 >
-                  {data.invoices.map((inv) => (
+                  {invoicesPage.items.map((inv) => (
                     <tr key={inv.id}>
                       <td className="px-3 py-2">
                         <a
@@ -117,6 +121,14 @@ export function InvoicesClient() {
                     </tr>
                   ))}
                 </Table>
+                <PaginationBar
+                  page={invoicesPage.page}
+                  totalPages={invoicesPage.totalPages}
+                  total={invoicesPage.total}
+                  limit={invoicesPage.limit}
+                  onPageChange={invoicesPage.setPage}
+                />
+                </>
               )}
             </Card>
           </>

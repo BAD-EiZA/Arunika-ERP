@@ -10,6 +10,7 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
@@ -18,6 +19,7 @@ import {
   useGoodsReceiptsQuery,
   usePostGoodsReceiptMutation,
 } from "@/hooks/use-erp-queries";
+import { useClientPage } from "@/hooks/use-client-page";
 import { formatDateId } from "@/lib/dates";
 import { qty } from "@/lib/money";
 
@@ -32,6 +34,7 @@ export function GoodsReceiptsClient() {
     () => data?.openPos.find((p) => p.id === (poId || data.openPos[0]?.id)),
     [data?.openPos, poId],
   );
+  const receiptsPage = useClientPage(data?.receipts ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -173,29 +176,38 @@ export function GoodsReceiptsClient() {
               )}
             </Card>
 
-            <Card title="Riwayat GR">
-              {data.receipts.length === 0 ? (
+            <Card title={`Riwayat GR (${receiptsPage.total})`}>
+              {receiptsPage.total === 0 ? (
                 <EmptyState message="Belum ada penerimaan" />
               ) : (
-                <Table headers={["Nomor", "Pemasok", "Status", "Tanggal", "Item"]}>
-                  {data.receipts.map((gr) => (
-                    <tr key={gr.id}>
-                      <td className="px-3 py-2">{gr.number}</td>
-                      <td className="px-3 py-2">{gr.supplier.name}</td>
-                      <td className="px-3 py-2">
-                        <Badge tone="success">{gr.status}</Badge>
-                      </td>
-                      <td className="px-3 py-2">
-                        {formatDateId(gr.receiptDate)}
-                      </td>
-                      <td className="px-3 py-2 text-xs">
-                        {gr.items
-                          .map((i) => `${i.sku}×${i.quantityReceived}`)
-                          .join(", ")}
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
+                <>
+                  <Table headers={["Nomor", "Pemasok", "Status", "Tanggal", "Item"]}>
+                    {receiptsPage.items.map((gr) => (
+                      <tr key={gr.id}>
+                        <td className="px-3 py-2">{gr.number}</td>
+                        <td className="px-3 py-2">{gr.supplier.name}</td>
+                        <td className="px-3 py-2">
+                          <Badge tone="success">{gr.status}</Badge>
+                        </td>
+                        <td className="px-3 py-2">
+                          {formatDateId(gr.receiptDate)}
+                        </td>
+                        <td className="px-3 py-2 text-xs">
+                          {gr.items
+                            .map((i) => `${i.sku}×${i.quantityReceived}`)
+                            .join(", ")}
+                        </td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={receiptsPage.page}
+                    totalPages={receiptsPage.totalPages}
+                    total={receiptsPage.total}
+                    limit={receiptsPage.limit}
+                    onPageChange={receiptsPage.setPage}
+                  />
+                </>
               )}
             </Card>
           </>

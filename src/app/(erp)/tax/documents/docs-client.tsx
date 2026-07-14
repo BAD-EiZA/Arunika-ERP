@@ -9,6 +9,7 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
@@ -17,6 +18,7 @@ import {
   useTaxDocumentMutation,
   useTaxDocumentsQuery,
 } from "@/hooks/use-erp-queries";
+import { useClientPage } from "@/hooks/use-client-page";
 import { formToObject } from "@/lib/api-client";
 import { formatDateId, yearMonth } from "@/lib/dates";
 import { formatIdr } from "@/lib/money";
@@ -40,6 +42,7 @@ export function TaxDocumentsClient() {
   const query = useTaxDocumentsQuery();
   const mutation = useTaxDocumentMutation();
   const data = query.data as DocsData | undefined;
+  const docsPage = useClientPage(data?.documents ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -159,37 +162,46 @@ export function TaxDocumentsClient() {
               </form>
             )}
           </Card>
-          <Card title="Daftar dokumen">
-            {!data || data.documents.length === 0 ? (
+          <Card title={`Daftar dokumen (${docsPage.total})`}>
+            {docsPage.total === 0 ? (
               <EmptyState message="Belum ada dokumen pajak" />
             ) : (
-              <Table
-                headers={[
-                  "Nomor",
-                  "Ver",
-                  "Tipe",
-                  "Partner",
-                  "DPP",
-                  "Pajak",
-                  "Status",
-                  "Tanggal",
-                ]}
-              >
-                {data.documents.map((d) => (
-                  <tr key={d.id}>
-                    <td className="px-3 py-2">{d.number}</td>
-                    <td className="px-3 py-2">v{d.version}</td>
-                    <td className="px-3 py-2">{d.docType}</td>
-                    <td className="px-3 py-2">{d.partnerName || "-"}</td>
-                    <td className="px-3 py-2">{formatIdr(d.dpp)}</td>
-                    <td className="px-3 py-2">{formatIdr(d.taxAmount)}</td>
-                    <td className="px-3 py-2">
-                      <Badge>{d.status}</Badge>
-                    </td>
-                    <td className="px-3 py-2">{formatDateId(d.documentDate)}</td>
-                  </tr>
-                ))}
-              </Table>
+              <>
+                <Table
+                  headers={[
+                    "Nomor",
+                    "Ver",
+                    "Tipe",
+                    "Partner",
+                    "DPP",
+                    "Pajak",
+                    "Status",
+                    "Tanggal",
+                  ]}
+                >
+                  {docsPage.items.map((d) => (
+                    <tr key={d.id}>
+                      <td className="px-3 py-2">{d.number}</td>
+                      <td className="px-3 py-2">v{d.version}</td>
+                      <td className="px-3 py-2">{d.docType}</td>
+                      <td className="px-3 py-2">{d.partnerName || "-"}</td>
+                      <td className="px-3 py-2">{formatIdr(d.dpp)}</td>
+                      <td className="px-3 py-2">{formatIdr(d.taxAmount)}</td>
+                      <td className="px-3 py-2">
+                        <Badge>{d.status}</Badge>
+                      </td>
+                      <td className="px-3 py-2">{formatDateId(d.documentDate)}</td>
+                    </tr>
+                  ))}
+                </Table>
+                <PaginationBar
+                  page={docsPage.page}
+                  totalPages={docsPage.totalPages}
+                  total={docsPage.total}
+                  limit={docsPage.limit}
+                  onPageChange={docsPage.setPage}
+                />
+              </>
             )}
           </Card>
         </>

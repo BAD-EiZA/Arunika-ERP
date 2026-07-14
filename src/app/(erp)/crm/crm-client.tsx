@@ -10,10 +10,12 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
 import { MutationError, QueryBoundary } from "@/components/query-state";
+import { useClientPage } from "@/hooks/use-client-page";
 import { apiGet, apiPost, formToObject } from "@/lib/api-client";
 import { formatIdr } from "@/lib/money";
 
@@ -48,6 +50,8 @@ export function CrmClient() {
     },
   });
   const data = query.data;
+  const leadsPage = useClientPage(data?.leads ?? [], 20);
+  const oppsPage = useClientPage(data?.opportunities ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -139,12 +143,13 @@ export function CrmClient() {
                 </form>
               </Card>
             </div>
-            <Card title="Leads">
-              {data.leads.length === 0 ? (
+            <Card title={`Leads (${leadsPage.total})`}>
+              {leadsPage.total === 0 ? (
                 <EmptyState message="Belum ada lead" />
               ) : (
+                <>
                 <Table headers={["Nama", "Email", "Sumber", "Status", "Aksi"]}>
-                  {data.leads.map((l) => (
+                  {leadsPage.items.map((l) => (
                     <tr key={l.id}>
                       <td className="px-3 py-2">{l.name}</td>
                       <td className="px-3 py-2">{l.email || "-"}</td>
@@ -170,14 +175,23 @@ export function CrmClient() {
                     </tr>
                   ))}
                 </Table>
+                <PaginationBar
+                  page={leadsPage.page}
+                  totalPages={leadsPage.totalPages}
+                  total={leadsPage.total}
+                  limit={leadsPage.limit}
+                  onPageChange={leadsPage.setPage}
+                />
+                </>
               )}
             </Card>
-            <Card title="Opportunities">
-              {data.opportunities.length === 0 ? (
+            <Card title={`Opportunities (${oppsPage.total})`}>
+              {oppsPage.total === 0 ? (
                 <EmptyState message="Belum ada opportunity" />
               ) : (
+                <>
                 <Table headers={["Judul", "Stage", "Nilai", "%", "Status", "Aksi"]}>
-                  {data.opportunities.map((o) => (
+                  {oppsPage.items.map((o) => (
                     <tr key={o.id}>
                       <td className="px-3 py-2">{o.title}</td>
                       <td className="px-3 py-2">{o.stage}</td>
@@ -205,6 +219,14 @@ export function CrmClient() {
                     </tr>
                   ))}
                 </Table>
+                <PaginationBar
+                  page={oppsPage.page}
+                  totalPages={oppsPage.totalPages}
+                  total={oppsPage.total}
+                  limit={oppsPage.limit}
+                  onPageChange={oppsPage.setPage}
+                />
+                </>
               )}
             </Card>
           </>

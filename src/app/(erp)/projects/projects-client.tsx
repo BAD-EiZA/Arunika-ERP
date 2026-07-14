@@ -10,6 +10,7 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
@@ -18,6 +19,7 @@ import {
   useProjectsMutation,
   useProjectsQuery,
 } from "@/hooks/use-erp-queries";
+import { useClientPage } from "@/hooks/use-client-page";
 import { formToObject } from "@/lib/api-client";
 import { formatIdr } from "@/lib/money";
 
@@ -55,6 +57,7 @@ export function ProjectsClient() {
   const mutation = useProjectsMutation();
   const data = query.data as ProjectsData | undefined;
   const [profit, setProfit] = useState<Record<string, string> | null>(null);
+  const projectsPage = useClientPage(data?.projects ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -238,74 +241,83 @@ export function ProjectsClient() {
               </Card>
             </div>
 
-            <Card title="Daftar project">
-              {data.projects.length === 0 ? (
+            <Card title={`Daftar project (${projectsPage.total})`}>
+              {projectsPage.total === 0 ? (
                 <EmptyState message="Belum ada project" />
               ) : (
-                <Table
-                  headers={[
-                    "Kode",
-                    "Nama",
-                    "Budget",
-                    "Actual",
-                    "Status",
-                    "Tasks",
-                    "Aksi",
-                  ]}
-                >
-                  {data.projects.map((p) => (
-                    <tr key={p.id}>
-                      <td className="px-3 py-2 font-medium">{p.code}</td>
-                      <td className="px-3 py-2">{p.name}</td>
-                      <td className="px-3 py-2">{formatIdr(p.budgetAmount)}</td>
-                      <td className="px-3 py-2">{formatIdr(p.actualCost)}</td>
-                      <td className="px-3 py-2">
-                        <Badge>{p.status}</Badge>
-                      </td>
-                      <td className="px-3 py-2">{p.tasks.length}</td>
-                      <td className="px-3 py-2">
-                        <div className="flex flex-wrap gap-1">
-                          {p.timesheets
-                            .filter((t) => t.status === "PENDING_APPROVAL")
-                            .slice(0, 1)
-                            .map((t) => (
-                              <Button
-                                key={t.id}
-                                type="button"
-                                variant="secondary"
-                                onClick={() =>
-                                  mutation.mutate({
-                                    action: "approve_timesheet",
-                                    id: t.id,
-                                  })
-                                }
-                              >
-                                Approve TS
-                              </Button>
-                            ))}
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            onClick={() => {
-                              mutation.mutate(
-                                {
-                                  action: "profitability",
-                                  projectId: p.id,
-                                },
-                                {
-                                  onSuccess: (res) =>
-                                    setProfit(res as Record<string, string>),
-                                },
-                              );
-                            }}
-                          >
-                            Profit
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
+                <>
+                  <Table
+                    headers={[
+                      "Kode",
+                      "Nama",
+                      "Budget",
+                      "Actual",
+                      "Status",
+                      "Tasks",
+                      "Aksi",
+                    ]}
+                  >
+                    {projectsPage.items.map((p) => (
+                      <tr key={p.id}>
+                        <td className="px-3 py-2 font-medium">{p.code}</td>
+                        <td className="px-3 py-2">{p.name}</td>
+                        <td className="px-3 py-2">{formatIdr(p.budgetAmount)}</td>
+                        <td className="px-3 py-2">{formatIdr(p.actualCost)}</td>
+                        <td className="px-3 py-2">
+                          <Badge>{p.status}</Badge>
+                        </td>
+                        <td className="px-3 py-2">{p.tasks.length}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex flex-wrap gap-1">
+                            {p.timesheets
+                              .filter((t) => t.status === "PENDING_APPROVAL")
+                              .slice(0, 1)
+                              .map((t) => (
+                                <Button
+                                  key={t.id}
+                                  type="button"
+                                  variant="secondary"
+                                  onClick={() =>
+                                    mutation.mutate({
+                                      action: "approve_timesheet",
+                                      id: t.id,
+                                    })
+                                  }
+                                >
+                                  Approve TS
+                                </Button>
+                              ))}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              onClick={() => {
+                                mutation.mutate(
+                                  {
+                                    action: "profitability",
+                                    projectId: p.id,
+                                  },
+                                  {
+                                    onSuccess: (res) =>
+                                      setProfit(res as Record<string, string>),
+                                  },
+                                );
+                              }}
+                            >
+                              Profit
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={projectsPage.page}
+                    totalPages={projectsPage.totalPages}
+                    total={projectsPage.total}
+                    limit={projectsPage.limit}
+                    onPageChange={projectsPage.setPage}
+                  />
+                </>
               )}
             </Card>
 

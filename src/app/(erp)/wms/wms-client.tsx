@@ -9,10 +9,12 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
 import { MutationError, QueryBoundary } from "@/components/query-state";
+import { useClientPage } from "@/hooks/use-client-page";
 import { apiGet, apiPost, formToObject } from "@/lib/api-client";
 
 type WmsData = {
@@ -46,6 +48,8 @@ export function WmsClient() {
     },
   });
   const data = query.data;
+  const binsPage = useClientPage(data?.bins ?? [], 20);
+  const balancesPage = useClientPage(data?.balances ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -163,34 +167,52 @@ export function WmsClient() {
                 </form>
               </Card>
             </div>
-            <Card title="Bin">
-              {data.bins.length === 0 ? (
+            <Card title={`Bin (${binsPage.total})`}>
+              {binsPage.total === 0 ? (
                 <EmptyState message="Belum ada bin" />
               ) : (
-                <Table headers={["Kode", "Nama", "Aisle"]}>
-                  {data.bins.map((b) => (
-                    <tr key={b.id}>
-                      <td className="px-3 py-2">{b.code}</td>
-                      <td className="px-3 py-2">{b.name}</td>
-                      <td className="px-3 py-2">{b.aisle || "-"}</td>
-                    </tr>
-                  ))}
-                </Table>
+                <>
+                  <Table headers={["Kode", "Nama", "Aisle"]}>
+                    {binsPage.items.map((b) => (
+                      <tr key={b.id}>
+                        <td className="px-3 py-2">{b.code}</td>
+                        <td className="px-3 py-2">{b.name}</td>
+                        <td className="px-3 py-2">{b.aisle || "-"}</td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={binsPage.page}
+                    totalPages={binsPage.totalPages}
+                    total={binsPage.total}
+                    limit={binsPage.limit}
+                    onPageChange={binsPage.setPage}
+                  />
+                </>
               )}
             </Card>
-            <Card title="Saldo bin">
-              {data.balances.length === 0 ? (
+            <Card title={`Saldo bin (${balancesPage.total})`}>
+              {balancesPage.total === 0 ? (
                 <EmptyState message="Belum ada saldo bin" />
               ) : (
-                <Table headers={["Bin", "SKU", "Qty"]}>
-                  {data.balances.map((b) => (
-                    <tr key={b.id}>
-                      <td className="px-3 py-2">{b.binCode}</td>
-                      <td className="px-3 py-2">{b.sku}</td>
-                      <td className="px-3 py-2">{b.quantity}</td>
-                    </tr>
-                  ))}
-                </Table>
+                <>
+                  <Table headers={["Bin", "SKU", "Qty"]}>
+                    {balancesPage.items.map((b) => (
+                      <tr key={b.id}>
+                        <td className="px-3 py-2">{b.binCode}</td>
+                        <td className="px-3 py-2">{b.sku}</td>
+                        <td className="px-3 py-2">{b.quantity}</td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={balancesPage.page}
+                    totalPages={balancesPage.totalPages}
+                    total={balancesPage.total}
+                    limit={balancesPage.limit}
+                    onPageChange={balancesPage.setPage}
+                  />
+                </>
               )}
             </Card>
           </>

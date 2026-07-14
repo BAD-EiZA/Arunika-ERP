@@ -10,6 +10,7 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
@@ -18,6 +19,7 @@ import {
   useDeliveriesQuery,
   usePostDeliveryMutation,
 } from "@/hooks/use-erp-queries";
+import { useClientPage } from "@/hooks/use-client-page";
 import { formatDateId } from "@/lib/dates";
 import { qty } from "@/lib/money";
 
@@ -32,6 +34,7 @@ export function DeliveriesClient() {
     () => data?.openSos.find((s) => s.id === (soId || data.openSos[0]?.id)),
     [data?.openSos, soId],
   );
+  const deliveriesPage = useClientPage(data?.deliveries ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -164,29 +167,38 @@ export function DeliveriesClient() {
               )}
             </Card>
 
-            <Card title="Riwayat">
-              {data.deliveries.length === 0 ? (
+            <Card title={`Riwayat (${deliveriesPage.total})`}>
+              {deliveriesPage.total === 0 ? (
                 <EmptyState message="Belum ada pengiriman" />
               ) : (
-                <Table headers={["Nomor", "Pelanggan", "Status", "Tanggal", "Item"]}>
-                  {data.deliveries.map((d) => (
-                    <tr key={d.id}>
-                      <td className="px-3 py-2">{d.number}</td>
-                      <td className="px-3 py-2">{d.customer.name}</td>
-                      <td className="px-3 py-2">
-                        <Badge tone="success">{d.status}</Badge>
-                      </td>
-                      <td className="px-3 py-2">
-                        {formatDateId(d.deliveryDate)}
-                      </td>
-                      <td className="px-3 py-2 text-xs">
-                        {d.items
-                          .map((i) => `${i.sku}×${i.quantityDelivered}`)
-                          .join(", ")}
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
+                <>
+                  <Table headers={["Nomor", "Pelanggan", "Status", "Tanggal", "Item"]}>
+                    {deliveriesPage.items.map((d) => (
+                      <tr key={d.id}>
+                        <td className="px-3 py-2">{d.number}</td>
+                        <td className="px-3 py-2">{d.customer.name}</td>
+                        <td className="px-3 py-2">
+                          <Badge tone="success">{d.status}</Badge>
+                        </td>
+                        <td className="px-3 py-2">
+                          {formatDateId(d.deliveryDate)}
+                        </td>
+                        <td className="px-3 py-2 text-xs">
+                          {d.items
+                            .map((i) => `${i.sku}×${i.quantityDelivered}`)
+                            .join(", ")}
+                        </td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={deliveriesPage.page}
+                    totalPages={deliveriesPage.totalPages}
+                    total={deliveriesPage.total}
+                    limit={deliveriesPage.limit}
+                    onPageChange={deliveriesPage.setPage}
+                  />
+                </>
               )}
             </Card>
           </>

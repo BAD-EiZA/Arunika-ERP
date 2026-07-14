@@ -9,6 +9,7 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
@@ -17,6 +18,7 @@ import {
   useFinanceJournalMutation,
   useFinanceJournalsQuery,
 } from "@/hooks/use-erp-queries";
+import { useClientPage } from "@/hooks/use-client-page";
 import { formToObject } from "@/lib/api-client";
 import { formatDateId } from "@/lib/dates";
 import { formatIdr } from "@/lib/money";
@@ -38,6 +40,7 @@ export function JournalsClient() {
   const query = useFinanceJournalsQuery();
   const mutation = useFinanceJournalMutation();
   const data = query.data as JournalsData | undefined;
+  const journalsPage = useClientPage(data?.journals ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -90,24 +93,33 @@ export function JournalsClient() {
                 </Button>
               </form>
             </Card>
-            <Card title="Daftar jurnal">
-              {data.journals.length === 0 ? (
+            <Card title={`Daftar jurnal (${journalsPage.total})`}>
+              {journalsPage.total === 0 ? (
                 <EmptyState message="Belum ada jurnal" />
               ) : (
-                <Table headers={["Nomor", "Tanggal", "Deskripsi", "Status", "Debit", "Kredit"]}>
-                  {data.journals.map((j) => (
-                    <tr key={j.id}>
-                      <td className="px-3 py-2">{j.number}</td>
-                      <td className="px-3 py-2">{formatDateId(j.postingDate)}</td>
-                      <td className="px-3 py-2">{j.description}</td>
-                      <td className="px-3 py-2">
-                        <Badge tone="success">{j.status}</Badge>
-                      </td>
-                      <td className="px-3 py-2">{formatIdr(j.debit)}</td>
-                      <td className="px-3 py-2">{formatIdr(j.credit)}</td>
-                    </tr>
-                  ))}
-                </Table>
+                <>
+                  <Table headers={["Nomor", "Tanggal", "Deskripsi", "Status", "Debit", "Kredit"]}>
+                    {journalsPage.items.map((j) => (
+                      <tr key={j.id}>
+                        <td className="px-3 py-2">{j.number}</td>
+                        <td className="px-3 py-2">{formatDateId(j.postingDate)}</td>
+                        <td className="px-3 py-2">{j.description}</td>
+                        <td className="px-3 py-2">
+                          <Badge tone="success">{j.status}</Badge>
+                        </td>
+                        <td className="px-3 py-2">{formatIdr(j.debit)}</td>
+                        <td className="px-3 py-2">{formatIdr(j.credit)}</td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={journalsPage.page}
+                    totalPages={journalsPage.totalPages}
+                    total={journalsPage.total}
+                    limit={journalsPage.limit}
+                    onPageChange={journalsPage.setPage}
+                  />
+                </>
               )}
             </Card>
           </>

@@ -10,6 +10,7 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
@@ -24,6 +25,7 @@ import {
   useCreateSupplierBillMutation,
   useSupplierBillsQuery,
 } from "@/hooks/use-erp-queries";
+import { useClientPage } from "@/hooks/use-client-page";
 import { formatDateId } from "@/lib/dates";
 import { formatIdr } from "@/lib/money";
 
@@ -32,6 +34,7 @@ export function SupplierBillsClient() {
   const mutation = useCreateSupplierBillMutation();
   const data = query.data;
   const [lines, setLines] = useState<LineItemDraft[]>([]);
+  const billsPage = useClientPage(data?.bills ?? [], 20);
 
   useEffect(() => {
     if (data?.products?.length && lines.length === 0) {
@@ -150,35 +153,44 @@ export function SupplierBillsClient() {
               </form>
             </Card>
 
-            <Card title="Daftar">
-              {data.bills.length === 0 ? (
+            <Card title={`Daftar (${billsPage.total})`}>
+              {billsPage.total === 0 ? (
                 <EmptyState message="Belum ada tagihan" />
               ) : (
-                <Table
-                  headers={[
-                    "Nomor",
-                    "Pemasok",
-                    "Total",
-                    "Saldo",
-                    "Status",
-                    "Tanggal",
-                  ]}
-                >
-                  {data.bills.map((b) => (
-                    <tr key={b.id}>
-                      <td className="px-3 py-2">{b.number}</td>
-                      <td className="px-3 py-2">{b.supplier.name}</td>
-                      <td className="px-3 py-2">{formatIdr(b.total)}</td>
-                      <td className="px-3 py-2">{formatIdr(b.balance)}</td>
-                      <td className="px-3 py-2">
-                        <Badge>{b.status}</Badge>
-                      </td>
-                      <td className="px-3 py-2">
-                        {formatDateId(b.invoiceDate)}
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
+                <>
+                  <Table
+                    headers={[
+                      "Nomor",
+                      "Pemasok",
+                      "Total",
+                      "Saldo",
+                      "Status",
+                      "Tanggal",
+                    ]}
+                  >
+                    {billsPage.items.map((b) => (
+                      <tr key={b.id}>
+                        <td className="px-3 py-2">{b.number}</td>
+                        <td className="px-3 py-2">{b.supplier.name}</td>
+                        <td className="px-3 py-2">{formatIdr(b.total)}</td>
+                        <td className="px-3 py-2">{formatIdr(b.balance)}</td>
+                        <td className="px-3 py-2">
+                          <Badge>{b.status}</Badge>
+                        </td>
+                        <td className="px-3 py-2">
+                          {formatDateId(b.invoiceDate)}
+                        </td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={billsPage.page}
+                    totalPages={billsPage.totalPages}
+                    total={billsPage.total}
+                    limit={billsPage.limit}
+                    onPageChange={billsPage.setPage}
+                  />
+                </>
               )}
             </Card>
           </>

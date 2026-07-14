@@ -8,6 +8,7 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Table,
 } from "@/components/ui";
 import { MutationError, QueryBoundary } from "@/components/query-state";
@@ -15,6 +16,7 @@ import {
   useFinanceAssetMutation,
   useFinanceAssetsQuery,
 } from "@/hooks/use-erp-queries";
+import { useClientPage } from "@/hooks/use-client-page";
 import { formToObject } from "@/lib/api-client";
 import { formatDateId } from "@/lib/dates";
 import { formatIdr } from "@/lib/money";
@@ -35,6 +37,7 @@ export function AssetsClient() {
   const query = useFinanceAssetsQuery();
   const mutation = useFinanceAssetMutation();
   const data = query.data as AssetsData | undefined;
+  const assetsPage = useClientPage(data?.assets ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -85,44 +88,53 @@ export function AssetsClient() {
         error={query.error}
         onRetry={() => void query.refetch()}
       >
-        <Card title="Daftar aset">
-          {!data || data.assets.length === 0 ? (
+        <Card title={`Daftar aset (${assetsPage.total})`}>
+          {assetsPage.total === 0 ? (
             <EmptyState message="Belum ada aset" />
           ) : (
-            <Table
-              headers={[
-                "Kode",
-                "Nama",
-                "Perolehan",
-                "Akumulasi",
-                "Nilai buku",
-                "Tanggal",
-                "Aksi",
-              ]}
-            >
-              {data.assets.map((a) => (
-                <tr key={a.id}>
-                  <td className="px-3 py-2">{a.code}</td>
-                  <td className="px-3 py-2">{a.name}</td>
-                  <td className="px-3 py-2">{formatIdr(a.acquisitionCost)}</td>
-                  <td className="px-3 py-2">{formatIdr(a.accumulatedDep)}</td>
-                  <td className="px-3 py-2">{formatIdr(a.bookValue)}</td>
-                  <td className="px-3 py-2">{formatDateId(a.acquisitionDate)}</td>
-                  <td className="px-3 py-2">
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={mutation.isPending}
-                      onClick={() =>
-                        mutation.mutate({ action: "depreciate", id: a.id })
-                      }
-                    >
-                      Susut 1 bln
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </Table>
+            <>
+              <Table
+                headers={[
+                  "Kode",
+                  "Nama",
+                  "Perolehan",
+                  "Akumulasi",
+                  "Nilai buku",
+                  "Tanggal",
+                  "Aksi",
+                ]}
+              >
+                {assetsPage.items.map((a) => (
+                  <tr key={a.id}>
+                    <td className="px-3 py-2">{a.code}</td>
+                    <td className="px-3 py-2">{a.name}</td>
+                    <td className="px-3 py-2">{formatIdr(a.acquisitionCost)}</td>
+                    <td className="px-3 py-2">{formatIdr(a.accumulatedDep)}</td>
+                    <td className="px-3 py-2">{formatIdr(a.bookValue)}</td>
+                    <td className="px-3 py-2">{formatDateId(a.acquisitionDate)}</td>
+                    <td className="px-3 py-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={mutation.isPending}
+                        onClick={() =>
+                          mutation.mutate({ action: "depreciate", id: a.id })
+                        }
+                      >
+                        Susut 1 bln
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </Table>
+              <PaginationBar
+                page={assetsPage.page}
+                totalPages={assetsPage.totalPages}
+                total={assetsPage.total}
+                limit={assetsPage.limit}
+                onPageChange={assetsPage.setPage}
+              />
+            </>
           )}
         </Card>
       </QueryBoundary>

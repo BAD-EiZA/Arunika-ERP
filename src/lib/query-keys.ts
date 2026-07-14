@@ -2,16 +2,19 @@ export const queryKeys = {
   dashboard: ["dashboard"] as const,
   products: {
     all: ["products"] as const,
-    list: () => [...queryKeys.products.all, "list"] as const,
+    list: (page = 1, limit = 20) =>
+      [...queryKeys.products.all, "list", page, limit] as const,
     meta: () => [...queryKeys.products.all, "meta"] as const,
   },
   customers: {
     all: ["customers"] as const,
-    list: () => [...queryKeys.customers.all, "list"] as const,
+    list: (page = 1, limit = 20) =>
+      [...queryKeys.customers.all, "list", page, limit] as const,
   },
   suppliers: {
     all: ["suppliers"] as const,
-    list: () => [...queryKeys.suppliers.all, "list"] as const,
+    list: (page = 1, limit = 20) =>
+      [...queryKeys.suppliers.all, "list", page, limit] as const,
   },
   stock: {
     all: ["stock"] as const,

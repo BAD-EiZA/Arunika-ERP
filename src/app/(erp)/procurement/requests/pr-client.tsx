@@ -9,6 +9,7 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
@@ -17,6 +18,7 @@ import {
   usePurchaseRequestMutation,
   usePurchaseRequestsQuery,
 } from "@/hooks/use-erp-queries";
+import { useClientPage } from "@/hooks/use-client-page";
 import { formToObject } from "@/lib/api-client";
 
 export function PurchaseRequestsClient() {
@@ -34,6 +36,7 @@ export function PurchaseRequestsClient() {
         branches: Array<{ id: string; code: string; name: string }>;
       }
     | undefined;
+  const requestsPage = useClientPage(data?.requests ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -101,36 +104,45 @@ export function PurchaseRequestsClient() {
                 </Button>
               </form>
             </Card>
-            <Card title="Daftar">
-              {data.requests.length === 0 ? (
+            <Card title={`Daftar (${requestsPage.total})`}>
+              {requestsPage.total === 0 ? (
                 <EmptyState message="Belum ada PR" />
               ) : (
-                <Table headers={["Nomor", "Status", "Item", "Aksi"]}>
-                  {data.requests.map((pr) => (
-                    <tr key={pr.id}>
-                      <td className="px-3 py-2">{pr.number}</td>
-                      <td className="px-3 py-2">
-                        <Badge>{pr.status}</Badge>
-                      </td>
-                      <td className="px-3 py-2 text-xs">
-                        {pr.items.map((i) => `${i.sku}×${i.quantity}`).join(", ")}
-                      </td>
-                      <td className="px-3 py-2">
-                        {pr.status === "DRAFT" ? (
-                          <Button
-                            type="button"
-                            disabled={mutation.isPending}
-                            onClick={() =>
-                              mutation.mutate({ action: "approve", id: pr.id })
-                            }
-                          >
-                            Approve
-                          </Button>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
+                <>
+                  <Table headers={["Nomor", "Status", "Item", "Aksi"]}>
+                    {requestsPage.items.map((pr) => (
+                      <tr key={pr.id}>
+                        <td className="px-3 py-2">{pr.number}</td>
+                        <td className="px-3 py-2">
+                          <Badge>{pr.status}</Badge>
+                        </td>
+                        <td className="px-3 py-2 text-xs">
+                          {pr.items.map((i) => `${i.sku}×${i.quantity}`).join(", ")}
+                        </td>
+                        <td className="px-3 py-2">
+                          {pr.status === "DRAFT" ? (
+                            <Button
+                              type="button"
+                              disabled={mutation.isPending}
+                              onClick={() =>
+                                mutation.mutate({ action: "approve", id: pr.id })
+                              }
+                            >
+                              Approve
+                            </Button>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={requestsPage.page}
+                    totalPages={requestsPage.totalPages}
+                    total={requestsPage.total}
+                    limit={requestsPage.limit}
+                    onPageChange={requestsPage.setPage}
+                  />
+                </>
               )}
             </Card>
           </>

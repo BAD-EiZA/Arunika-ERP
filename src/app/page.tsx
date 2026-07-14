@@ -19,7 +19,7 @@ export default async function HomePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-amber-50/80 via-background to-background">
+    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_rgba(231,123,73,0.28),_transparent_50%),linear-gradient(180deg,#fff5f0_0%,#fde0d4_100%)]">
       <div className="mx-auto flex min-h-screen max-w-5xl flex-col justify-center px-6 py-16">
         <div className="mb-10">
           <Chip color="accent" size="sm" variant="soft" className="mb-3">

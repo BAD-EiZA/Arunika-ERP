@@ -10,6 +10,7 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
@@ -18,6 +19,7 @@ import {
   useReturnsMutation,
   useReturnsQuery,
 } from "@/hooks/use-erp-queries";
+import { useClientPage } from "@/hooks/use-client-page";
 import { apiGet, apiPost, formToObject } from "@/lib/api-client";
 import { formatIdr } from "@/lib/money";
 
@@ -77,6 +79,16 @@ export function ReturnsClient() {
     },
   });
   const data = query.data as ReturnsData | undefined;
+  const salesReturnsPage = useClientPage(data?.salesReturns ?? [], 20);
+  const purchaseReturnsPage = useClientPage(data?.purchaseReturns ?? [], 20);
+  const claimsPage = useClientPage(data?.claims ?? [], 20);
+  const notesPage = useClientPage(
+    [
+      ...(cnQuery.data?.creditNotes ?? []).map((n) => ({ ...n, noteType: "CN" as const })),
+      ...(cnQuery.data?.debitNotes ?? []).map((n) => ({ ...n, noteType: "DN" as const })),
+    ],
+    20,
+  );
 
   return (
     <div className="space-y-6">
@@ -219,74 +231,92 @@ export function ReturnsClient() {
               </Card>
             </div>
 
-            <Card title="Sales returns">
-              {data.salesReturns.length === 0 ? (
+            <Card title={`Sales returns (${salesReturnsPage.total})`}>
+              {salesReturnsPage.total === 0 ? (
                 <EmptyState message="Belum ada sales return" />
               ) : (
-                <Table headers={["Nomor", "Total", "Status", "Alasan", "Aksi"]}>
-                  {data.salesReturns.map((r) => (
-                    <tr key={r.id}>
-                      <td className="px-3 py-2">{r.number}</td>
-                      <td className="px-3 py-2">{formatIdr(r.total)}</td>
-                      <td className="px-3 py-2">
-                        <Badge>{r.status}</Badge>
-                      </td>
-                      <td className="px-3 py-2">{r.reason || "-"}</td>
-                      <td className="px-3 py-2">
-                        {r.status !== "POSTED" ? (
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            onClick={() =>
-                              mutation.mutate({
-                                action: "post_sales_return",
-                                id: r.id,
-                                warehouseId: data.warehouses[0]?.id,
-                              })
-                            }
-                          >
-                            Post
-                          </Button>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
+                <>
+                  <Table headers={["Nomor", "Total", "Status", "Alasan", "Aksi"]}>
+                    {salesReturnsPage.items.map((r) => (
+                      <tr key={r.id}>
+                        <td className="px-3 py-2">{r.number}</td>
+                        <td className="px-3 py-2">{formatIdr(r.total)}</td>
+                        <td className="px-3 py-2">
+                          <Badge>{r.status}</Badge>
+                        </td>
+                        <td className="px-3 py-2">{r.reason || "-"}</td>
+                        <td className="px-3 py-2">
+                          {r.status !== "POSTED" ? (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              onClick={() =>
+                                mutation.mutate({
+                                  action: "post_sales_return",
+                                  id: r.id,
+                                  warehouseId: data.warehouses[0]?.id,
+                                })
+                              }
+                            >
+                              Post
+                            </Button>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={salesReturnsPage.page}
+                    totalPages={salesReturnsPage.totalPages}
+                    total={salesReturnsPage.total}
+                    limit={salesReturnsPage.limit}
+                    onPageChange={salesReturnsPage.setPage}
+                  />
+                </>
               )}
             </Card>
 
-            <Card title="Purchase returns">
-              {data.purchaseReturns.length === 0 ? (
+            <Card title={`Purchase returns (${purchaseReturnsPage.total})`}>
+              {purchaseReturnsPage.total === 0 ? (
                 <EmptyState message="Belum ada purchase return" />
               ) : (
-                <Table headers={["Nomor", "Total", "Status", "Aksi"]}>
-                  {data.purchaseReturns.map((r) => (
-                    <tr key={r.id}>
-                      <td className="px-3 py-2">{r.number}</td>
-                      <td className="px-3 py-2">{formatIdr(r.total)}</td>
-                      <td className="px-3 py-2">
-                        <Badge>{r.status}</Badge>
-                      </td>
-                      <td className="px-3 py-2">
-                        {r.status !== "POSTED" ? (
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            onClick={() =>
-                              mutation.mutate({
-                                action: "post_purchase_return",
-                                id: r.id,
-                                warehouseId: data.warehouses[0]?.id,
-                              })
-                            }
-                          >
-                            Post
-                          </Button>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
+                <>
+                  <Table headers={["Nomor", "Total", "Status", "Aksi"]}>
+                    {purchaseReturnsPage.items.map((r) => (
+                      <tr key={r.id}>
+                        <td className="px-3 py-2">{r.number}</td>
+                        <td className="px-3 py-2">{formatIdr(r.total)}</td>
+                        <td className="px-3 py-2">
+                          <Badge>{r.status}</Badge>
+                        </td>
+                        <td className="px-3 py-2">
+                          {r.status !== "POSTED" ? (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              onClick={() =>
+                                mutation.mutate({
+                                  action: "post_purchase_return",
+                                  id: r.id,
+                                  warehouseId: data.warehouses[0]?.id,
+                                })
+                              }
+                            >
+                              Post
+                            </Button>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={purchaseReturnsPage.page}
+                    totalPages={purchaseReturnsPage.totalPages}
+                    total={purchaseReturnsPage.total}
+                    limit={purchaseReturnsPage.limit}
+                    onPageChange={purchaseReturnsPage.setPage}
+                  />
+                </>
               )}
             </Card>
 
@@ -324,28 +354,31 @@ export function ReturnsClient() {
                 </Button>
               </div>
               <MutationError error={cnMutation.error} />
-              <Table headers={["Tipe", "Nomor", "Total", "Status"]}>
-                {(cnQuery.data?.creditNotes || []).map((n) => (
-                  <tr key={n.id}>
-                    <td className="px-3 py-2">CN</td>
-                    <td className="px-3 py-2">{n.number}</td>
-                    <td className="px-3 py-2">{formatIdr(n.total)}</td>
-                    <td className="px-3 py-2">
-                      <Badge>{n.status}</Badge>
-                    </td>
-                  </tr>
-                ))}
-                {(cnQuery.data?.debitNotes || []).map((n) => (
-                  <tr key={n.id}>
-                    <td className="px-3 py-2">DN</td>
-                    <td className="px-3 py-2">{n.number}</td>
-                    <td className="px-3 py-2">{formatIdr(n.total)}</td>
-                    <td className="px-3 py-2">
-                      <Badge>{n.status}</Badge>
-                    </td>
-                  </tr>
-                ))}
-              </Table>
+              {notesPage.total === 0 ? (
+                <EmptyState message="Belum ada credit/debit note" />
+              ) : (
+                <>
+                  <Table headers={["Tipe", "Nomor", "Total", "Status"]}>
+                    {notesPage.items.map((n) => (
+                      <tr key={n.id}>
+                        <td className="px-3 py-2">{n.noteType}</td>
+                        <td className="px-3 py-2">{n.number}</td>
+                        <td className="px-3 py-2">{formatIdr(n.total)}</td>
+                        <td className="px-3 py-2">
+                          <Badge>{n.status}</Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={notesPage.page}
+                    totalPages={notesPage.totalPages}
+                    total={notesPage.total}
+                    limit={notesPage.limit}
+                    onPageChange={notesPage.setPage}
+                  />
+                </>
+              )}
             </Card>
 
             <Card title="Claim">
@@ -381,22 +414,31 @@ export function ReturnsClient() {
                   Buat claim
                 </Button>
               </form>
-              {data.claims.length === 0 ? (
+              {claimsPage.total === 0 ? (
                 <EmptyState message="Belum ada claim" />
               ) : (
-                <Table headers={["Nomor", "Tipe", "Partner", "Jumlah", "Status"]}>
-                  {data.claims.map((c) => (
-                    <tr key={c.id}>
-                      <td className="px-3 py-2">{c.number}</td>
-                      <td className="px-3 py-2">{c.claimType}</td>
-                      <td className="px-3 py-2">{c.partnerName || "-"}</td>
-                      <td className="px-3 py-2">{formatIdr(c.amount)}</td>
-                      <td className="px-3 py-2">
-                        <Badge>{c.status}</Badge>
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
+                <>
+                  <Table headers={["Nomor", "Tipe", "Partner", "Jumlah", "Status"]}>
+                    {claimsPage.items.map((c) => (
+                      <tr key={c.id}>
+                        <td className="px-3 py-2">{c.number}</td>
+                        <td className="px-3 py-2">{c.claimType}</td>
+                        <td className="px-3 py-2">{c.partnerName || "-"}</td>
+                        <td className="px-3 py-2">{formatIdr(c.amount)}</td>
+                        <td className="px-3 py-2">
+                          <Badge>{c.status}</Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={claimsPage.page}
+                    totalPages={claimsPage.totalPages}
+                    total={claimsPage.total}
+                    limit={claimsPage.limit}
+                    onPageChange={claimsPage.setPage}
+                  />
+                </>
               )}
             </Card>
           </>

@@ -10,6 +10,7 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
@@ -18,6 +19,7 @@ import {
   useSupplierPaymentMutation,
   useSupplierPaymentsQuery,
 } from "@/hooks/use-erp-queries";
+import { useClientPage } from "@/hooks/use-client-page";
 import { formatDateId } from "@/lib/dates";
 import { formatIdr } from "@/lib/money";
 
@@ -31,6 +33,7 @@ export function SupplierPaymentsClient() {
     () => data?.openBills.find((b) => b.id === (billId || data.openBills[0]?.id)),
     [data?.openBills, billId],
   );
+  const paymentsPage = useClientPage(data?.payments ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -99,27 +102,36 @@ export function SupplierPaymentsClient() {
               )}
             </Card>
 
-            <Card title="Riwayat">
-              {data.payments.length === 0 ? (
+            <Card title={`Riwayat (${paymentsPage.total})`}>
+              {paymentsPage.total === 0 ? (
                 <EmptyState message="Belum ada pembayaran" />
               ) : (
-                <Table
-                  headers={["Nomor", "Pemasok", "Jumlah", "Status", "Tanggal"]}
-                >
-                  {data.payments.map((p) => (
-                    <tr key={p.id}>
-                      <td className="px-3 py-2">{p.number}</td>
-                      <td className="px-3 py-2">{p.supplier.name}</td>
-                      <td className="px-3 py-2">{formatIdr(p.amount)}</td>
-                      <td className="px-3 py-2">
-                        <Badge tone="success">{p.status}</Badge>
-                      </td>
-                      <td className="px-3 py-2">
-                        {formatDateId(p.paymentDate)}
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
+                <>
+                  <Table
+                    headers={["Nomor", "Pemasok", "Jumlah", "Status", "Tanggal"]}
+                  >
+                    {paymentsPage.items.map((p) => (
+                      <tr key={p.id}>
+                        <td className="px-3 py-2">{p.number}</td>
+                        <td className="px-3 py-2">{p.supplier.name}</td>
+                        <td className="px-3 py-2">{formatIdr(p.amount)}</td>
+                        <td className="px-3 py-2">
+                          <Badge tone="success">{p.status}</Badge>
+                        </td>
+                        <td className="px-3 py-2">
+                          {formatDateId(p.paymentDate)}
+                        </td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={paymentsPage.page}
+                    totalPages={paymentsPage.totalPages}
+                    total={paymentsPage.total}
+                    limit={paymentsPage.limit}
+                    onPageChange={paymentsPage.setPage}
+                  />
+                </>
               )}
             </Card>
           </>

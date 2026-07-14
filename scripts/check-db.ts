@@ -1,22 +1,37 @@
 import "dotenv/config";
-import { PrismaClient } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { prisma } from "../src/lib/db";
 
 async function main() {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) throw new Error("DATABASE_URL missing");
-  const adapter = new PrismaPg({
-    connectionString,
-    ssl: { rejectUnauthorized: false },
+  const companies = await prisma.company.findMany({
+    select: { id: true, code: true, name: true, createdAt: true },
   });
-  const prisma = new PrismaClient({ adapter });
-  const users = await prisma.user.count();
-  const companies = await prisma.company.count();
-  console.log(JSON.stringify({ ok: true, users, companies }));
-  await prisma.$disconnect();
+  const users = await prisma.user.findMany({
+    select: { id: true, email: true, name: true, kindeUserId: true },
+  });
+  const memberships = await prisma.membership.findMany({
+    include: {
+      user: { select: { email: true } },
+      company: { select: { code: true, name: true } },
+      role: { select: { code: true } },
+    },
+  });
+  const products = await prisma.product.count();
+  const customers = await prisma.customer.count();
+  const suppliers = await prisma.supplier.count();
+  console.log(
+    JSON.stringify(
+      { companies, users, memberships, products, customers, suppliers },
+      null,
+      2,
+    ),
+  );
 }
 
-main().catch(async (e) => {
-  console.error("DB_FAIL", e);
-  process.exit(1);
-});
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

@@ -1,18 +1,26 @@
 import { requirePermission, requireTenant } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
+import { pageMeta, parsePageParams } from "@/lib/pagination";
 import { createCategory, createProduct } from "@/server/services/master-data";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
   return withApiHandler(async () => {
     const ctx = await requireTenant();
-    const [products, units, categories] = await Promise.all([
+    const { searchParams } = new URL(req.url);
+    const { page, limit, skip } = parsePageParams(searchParams);
+
+    const where = { companyId: ctx.companyId };
+    const [total, products, units, categories] = await Promise.all([
+      prisma.product.count({ where }),
       prisma.product.findMany({
-        where: { companyId: ctx.companyId },
+        where,
         include: { unit: true, category: true },
         orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
       }),
       prisma.unit.findMany({
         where: { companyId: ctx.companyId, isActive: true },
@@ -21,6 +29,8 @@ export async function GET() {
         where: { companyId: ctx.companyId, isActive: true },
       }),
     ]);
+
+    const meta = pageMeta(total, page, limit);
 
     return {
       products: products.map((p) => ({
@@ -44,6 +54,10 @@ export async function GET() {
         name: c.name,
         code: c.code,
       })),
+      page: meta.page,
+      limit: meta.limit,
+      total: meta.total,
+      totalPages: meta.totalPages,
     };
   });
 }

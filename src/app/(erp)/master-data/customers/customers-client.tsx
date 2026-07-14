@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   Button,
   Card,
@@ -8,6 +9,7 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Table,
 } from "@/components/ui";
 import { MutationError, QueryBoundary } from "@/components/query-state";
@@ -17,14 +19,25 @@ import {
 } from "@/hooks/use-erp-queries";
 import { formToObject } from "@/lib/api-client";
 
+const PAGE_SIZE = 20;
+
 export function CustomersClient() {
-  const query = useCustomersQuery();
+  const [page, setPage] = useState(1);
+  const query = useCustomersQuery(page, PAGE_SIZE);
   const createCustomer = useCreateCustomerMutation();
   const data = query.data;
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Pelanggan" description="Data via TanStack Query" />
+      <PageHeader
+        title="Pelanggan"
+        description="Data via TanStack Query"
+        crumbs={[
+          { label: "ERP", href: "/dashboard" },
+          { label: "Master" },
+          { label: "Pelanggan" },
+        ]}
+      />
 
       <Card title="Tambah pelanggan">
         <form
@@ -33,7 +46,10 @@ export function CustomersClient() {
             e.preventDefault();
             const body = formToObject(e.currentTarget);
             createCustomer.mutate(body, {
-              onSuccess: () => e.currentTarget.reset(),
+              onSuccess: () => {
+                e.currentTarget.reset();
+                setPage(1);
+              },
             });
           }}
         >
@@ -64,21 +80,31 @@ export function CustomersClient() {
         error={query.error}
         onRetry={() => void query.refetch()}
       >
-        <Card title="Daftar">
+        <Card title={`Daftar (${data?.total ?? 0})`}>
           {!data || data.customers.length === 0 ? (
             <EmptyState message="Belum ada pelanggan" />
           ) : (
-            <Table headers={["Kode", "Nama", "Email", "Telepon", "Termin"]}>
-              {data.customers.map((c) => (
-                <tr key={c.id}>
-                  <td className="px-3 py-2">{c.code}</td>
-                  <td className="px-3 py-2">{c.name}</td>
-                  <td className="px-3 py-2">{c.email || "-"}</td>
-                  <td className="px-3 py-2">{c.phone || "-"}</td>
-                  <td className="px-3 py-2">{c.paymentTermDays} hari</td>
-                </tr>
-              ))}
-            </Table>
+            <>
+              <Table headers={["Kode", "Nama", "Email", "Telepon", "Termin"]}>
+                {data.customers.map((c) => (
+                  <tr key={c.id}>
+                    <td className="px-3 py-2">{c.code}</td>
+                    <td className="px-3 py-2">{c.name}</td>
+                    <td className="px-3 py-2">{c.email || "-"}</td>
+                    <td className="px-3 py-2">{c.phone || "-"}</td>
+                    <td className="px-3 py-2">{c.paymentTermDays} hari</td>
+                  </tr>
+                ))}
+              </Table>
+              <PaginationBar
+                page={data.page}
+                totalPages={data.totalPages}
+                total={data.total}
+                limit={data.limit}
+                disabled={query.isFetching}
+                onPageChange={setPage}
+              />
+            </>
           )}
         </Card>
       </QueryBoundary>

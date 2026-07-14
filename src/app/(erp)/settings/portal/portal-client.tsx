@@ -10,10 +10,12 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
 import { MutationError, QueryBoundary } from "@/components/query-state";
+import { useClientPage } from "@/hooks/use-client-page";
 import { apiGet, apiPost, formToObject } from "@/lib/api-client";
 import { formatDateTimeId } from "@/lib/dates";
 
@@ -42,6 +44,7 @@ export function PortalSettingsClient() {
       await qc.invalidateQueries({ queryKey: ["portal-tokens"] });
     },
   });
+  const tokensPage = useClientPage(query.data?.tokens ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -86,31 +89,40 @@ export function PortalSettingsClient() {
         error={query.error}
         onRetry={() => void query.refetch()}
       >
-        <Card title="Token aktif">
-          {!query.data || query.data.tokens.length === 0 ? (
+        <Card title={`Token aktif (${tokensPage.total})`}>
+          {tokensPage.total === 0 ? (
             <EmptyState message="Belum ada token" />
           ) : (
-            <Table headers={["Tipe", "Email", "URL", "Exp", "Status"]}>
-              {query.data.tokens.map((t) => (
-                <tr key={t.id}>
-                  <td className="px-3 py-2">{t.portalType}</td>
-                  <td className="px-3 py-2">{t.partnerEmail}</td>
-                  <td className="px-3 py-2 text-xs">
-                    <a className="text-accent underline" href={`/portal?token=${t.token}`}>
-                      /portal?token=…
-                    </a>
-                  </td>
-                  <td className="px-3 py-2 text-xs">
-                    {formatDateTimeId(t.expiresAt)}
-                  </td>
-                  <td className="px-3 py-2">
-                    <Badge tone={t.isActive ? "success" : "danger"}>
-                      {t.isActive ? "Aktif" : "Nonaktif"}
-                    </Badge>
-                  </td>
-                </tr>
-              ))}
-            </Table>
+            <>
+              <Table headers={["Tipe", "Email", "URL", "Exp", "Status"]}>
+                {tokensPage.items.map((t) => (
+                  <tr key={t.id}>
+                    <td className="px-3 py-2">{t.portalType}</td>
+                    <td className="px-3 py-2">{t.partnerEmail}</td>
+                    <td className="px-3 py-2 text-xs">
+                      <a className="text-accent underline" href={`/portal?token=${t.token}`}>
+                        /portal?token=…
+                      </a>
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      {formatDateTimeId(t.expiresAt)}
+                    </td>
+                    <td className="px-3 py-2">
+                      <Badge tone={t.isActive ? "success" : "danger"}>
+                        {t.isActive ? "Aktif" : "Nonaktif"}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </Table>
+              <PaginationBar
+                page={tokensPage.page}
+                totalPages={tokensPage.totalPages}
+                total={tokensPage.total}
+                limit={tokensPage.limit}
+                onPageChange={tokensPage.setPage}
+              />
+            </>
           )}
         </Card>
       </QueryBoundary>

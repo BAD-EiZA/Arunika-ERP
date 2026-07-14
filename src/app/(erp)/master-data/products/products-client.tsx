@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   Badge,
   Button,
@@ -9,6 +10,7 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
@@ -21,8 +23,11 @@ import {
 import { formToObject } from "@/lib/api-client";
 import { formatIdr } from "@/lib/money";
 
+const PAGE_SIZE = 20;
+
 export function ProductsClient() {
-  const query = useProductsQuery();
+  const [page, setPage] = useState(1);
+  const query = useProductsQuery(page, PAGE_SIZE);
   const createProduct = useCreateProductMutation();
   const createCategory = useCreateCategoryMutation();
   const data = query.data;
@@ -32,6 +37,11 @@ export function ProductsClient() {
       <PageHeader
         title="Produk"
         description="Master produk via TanStack Query"
+        crumbs={[
+          { label: "ERP", href: "/dashboard" },
+          { label: "Master", href: "/master-data/products" },
+          { label: "Produk" },
+        ]}
       />
 
       <QueryBoundary
@@ -50,7 +60,10 @@ export function ProductsClient() {
                     e.preventDefault();
                     const body = formToObject(e.currentTarget);
                     createProduct.mutate(body, {
-                      onSuccess: () => e.currentTarget.reset(),
+                      onSuccess: () => {
+                        e.currentTarget.reset();
+                        setPage(1);
+                      },
                     });
                   }}
                 >
@@ -113,10 +126,7 @@ export function ProductsClient() {
                     </Field>
                   </FormGrid>
                   <MutationError error={createProduct.error} />
-                  <Button
-                    type="submit"
-                    disabled={createProduct.isPending}
-                  >
+                  <Button type="submit" disabled={createProduct.isPending}>
                     {createProduct.isPending ? "Menyimpan..." : "Simpan produk"}
                   </Button>
                 </form>
@@ -155,30 +165,40 @@ export function ProductsClient() {
               </Card>
             </div>
 
-            <Card title="Daftar produk">
+            <Card title={`Daftar produk (${data.total})`}>
               {data.products.length === 0 ? (
                 <EmptyState message="Belum ada produk" />
               ) : (
-                <Table
-                  headers={["SKU", "Nama", "Satuan", "Beli", "Jual", "Status"]}
-                >
-                  {data.products.map((p) => (
-                    <tr key={p.id}>
-                      <td className="px-3 py-2 font-medium">{p.sku}</td>
-                      <td className="px-3 py-2">{p.name}</td>
-                      <td className="px-3 py-2">{p.unit.symbol}</td>
-                      <td className="px-3 py-2">
-                        {formatIdr(p.purchasePrice)}
-                      </td>
-                      <td className="px-3 py-2">{formatIdr(p.salePrice)}</td>
-                      <td className="px-3 py-2">
-                        <Badge tone={p.isArchived ? "danger" : "success"}>
-                          {p.isArchived ? "Arsip" : p.type}
-                        </Badge>
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
+                <>
+                  <Table
+                    headers={["SKU", "Nama", "Satuan", "Beli", "Jual", "Status"]}
+                  >
+                    {data.products.map((p) => (
+                      <tr key={p.id}>
+                        <td className="px-3 py-2 font-medium">{p.sku}</td>
+                        <td className="px-3 py-2">{p.name}</td>
+                        <td className="px-3 py-2">{p.unit.symbol}</td>
+                        <td className="px-3 py-2">
+                          {formatIdr(p.purchasePrice)}
+                        </td>
+                        <td className="px-3 py-2">{formatIdr(p.salePrice)}</td>
+                        <td className="px-3 py-2">
+                          <Badge tone={p.isArchived ? "danger" : "success"}>
+                            {p.isArchived ? "Arsip" : p.type}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={data.page}
+                    totalPages={data.totalPages}
+                    total={data.total}
+                    limit={data.limit}
+                    disabled={query.isFetching}
+                    onPageChange={setPage}
+                  />
+                </>
               )}
             </Card>
           </>

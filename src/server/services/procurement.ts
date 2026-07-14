@@ -270,7 +270,7 @@ export async function postGoodsReceipt(input: {
     });
 
     return gr;
-  });
+  }, { maxWait: 15000, timeout: 60000 });
 }
 
 export async function createSupplierBill(input: {

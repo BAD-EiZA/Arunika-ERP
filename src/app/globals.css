@@ -6,6 +6,79 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* ColorHunt: #60241E · #95271D · #B34A44 · #E77B49 */
+@layer base {
+  :root,
+  .light,
+  .default,
+  [data-theme="light"],
+  [data-theme="default"] {
+    --palette-deep: #60241e;
+    --palette-brick: #95271d;
+    --palette-coral: #b34a44;
+    --palette-ember: #e77b49;
+
+    --background: #fff5f0;
+    --foreground: #60241e;
+
+    --surface: #fffaf8;
+    --surface-foreground: #60241e;
+    --surface-secondary: color-mix(in srgb, #e77b49 12%, #fff5f0 88%);
+    --surface-secondary-foreground: #60241e;
+    --surface-tertiary: color-mix(in srgb, #b34a44 10%, #fff5f0 90%);
+    --surface-tertiary-foreground: #60241e;
+
+    --overlay: #fffaf8;
+    --overlay-foreground: #60241e;
+
+    --muted: color-mix(in srgb, #60241e 55%, #b34a44 45%);
+
+    --default: color-mix(in srgb, #e77b49 14%, #fff5f0 86%);
+    --default-foreground: #60241e;
+
+    --accent: #95271d;
+    --accent-foreground: #fff5f0;
+
+    --field-background: #fffaf8;
+    --field-foreground: #60241e;
+    --field-placeholder: color-mix(in srgb, #60241e 45%, transparent);
+    --field-border: color-mix(in srgb, #60241e 12%, transparent);
+
+    --border: color-mix(in srgb, #60241e 12%, #e77b49 18%, #fff5f0 70%);
+    --separator: color-mix(in srgb, #60241e 10%, #fff5f0 90%);
+    --focus: #e77b49;
+    --link: #95271d;
+
+    --segment: #fffaf8;
+    --segment-foreground: #60241e;
+
+    --success: #3d6b4f;
+    --success-foreground: #fff5f0;
+    --warning: #e77b49;
+    --warning-foreground: #60241e;
+    --danger: #95271d;
+    --danger-foreground: #fff5f0;
+
+    --accent-soft: color-mix(in srgb, #95271d 14%, transparent);
+    --accent-soft-foreground: #95271d;
+    --accent-soft-hover: color-mix(in srgb, #95271d 22%, transparent);
+
+    --accent-hover: color-mix(in srgb, #95271d 88%, #e77b49 12%);
+
+    --surface-shadow:
+      0 2px 4px 0 rgba(96, 36, 30, 0.06), 0 1px 2px 0 rgba(96, 36, 30, 0.07),
+      0 0 1px 0 rgba(96, 36, 30, 0.06);
+    --overlay-shadow:
+      0 2px 8px 0 rgba(96, 36, 30, 0.1), 0 14px 28px 0 rgba(96, 36, 30, 0.12);
+  }
+}
+
 body {
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+.bg-surface-secondary {
+  background: color-mix(in srgb, var(--surface) 88%, var(--palette-ember, #e77b49) 12%);
 }

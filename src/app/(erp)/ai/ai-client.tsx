@@ -7,9 +7,11 @@ import {
   Card,
   EmptyState,
   PageHeader,
+  PaginationBar,
   Table,
 } from "@/components/ui";
 import { MutationError, QueryBoundary } from "@/components/query-state";
+import { useClientPage } from "@/hooks/use-client-page";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { formatDateTimeId } from "@/lib/dates";
 
@@ -37,6 +39,7 @@ export function AiClient() {
       await qc.invalidateQueries({ queryKey: ["ai"] });
     },
   });
+  const insightsPage = useClientPage(query.data?.insights ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -60,37 +63,46 @@ export function AiClient() {
         error={query.error}
         onRetry={() => void query.refetch()}
       >
-        <Card title="Insight">
-          {!query.data || query.data.insights.length === 0 ? (
+        <Card title={`Insight (${insightsPage.total})`}>
+          {insightsPage.total === 0 ? (
             <EmptyState message="Belum ada insight. Jalankan analisis." />
           ) : (
-            <Table headers={["Waktu", "Model", "Severity", "Ringkasan"]}>
-              {query.data.insights.map((i) => (
-                <tr key={i.id}>
-                  <td className="px-3 py-2 text-xs">
-                    {formatDateTimeId(i.createdAt)}
-                  </td>
-                  <td className="px-3 py-2 text-xs">{i.model || "-"}</td>
-                  <td className="px-3 py-2">
-                    <Badge
-                      tone={
-                        i.severity === "warning"
-                          ? "warning"
-                          : i.severity === "danger"
-                            ? "danger"
-                            : "default"
-                      }
-                    >
-                      {i.severity}
-                    </Badge>
-                  </td>
-                  <td className="px-3 py-2 whitespace-pre-wrap text-sm">
-                    {i.summary.slice(0, 500)}
-                    {i.summary.length > 500 ? "…" : ""}
-                  </td>
-                </tr>
-              ))}
-            </Table>
+            <>
+              <Table headers={["Waktu", "Model", "Severity", "Ringkasan"]}>
+                {insightsPage.items.map((i) => (
+                  <tr key={i.id}>
+                    <td className="px-3 py-2 text-xs">
+                      {formatDateTimeId(i.createdAt)}
+                    </td>
+                    <td className="px-3 py-2 text-xs">{i.model || "-"}</td>
+                    <td className="px-3 py-2">
+                      <Badge
+                        tone={
+                          i.severity === "warning"
+                            ? "warning"
+                            : i.severity === "danger"
+                              ? "danger"
+                              : "default"
+                        }
+                      >
+                        {i.severity}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2 whitespace-pre-wrap text-sm">
+                      {i.summary.slice(0, 500)}
+                      {i.summary.length > 500 ? "…" : ""}
+                    </td>
+                  </tr>
+                ))}
+              </Table>
+              <PaginationBar
+                page={insightsPage.page}
+                totalPages={insightsPage.totalPages}
+                total={insightsPage.total}
+                limit={insightsPage.limit}
+                onPageChange={insightsPage.setPage}
+              />
+            </>
           )}
         </Card>
       </QueryBoundary>

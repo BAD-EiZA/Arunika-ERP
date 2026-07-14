@@ -9,11 +9,13 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
 import { MutationError, QueryBoundary } from "@/components/query-state";
 import { useHrMutation, useHrQuery } from "@/hooks/use-erp-queries";
+import { useClientPage } from "@/hooks/use-client-page";
 import { formToObject } from "@/lib/api-client";
 import { formatDateId } from "@/lib/dates";
 import { formatIdr } from "@/lib/money";
@@ -49,6 +51,9 @@ export function HrClient() {
   const query = useHrQuery();
   const mutation = useHrMutation();
   const data = query.data as HrData | undefined;
+  const employeesPage = useClientPage(data?.employees ?? [], 20);
+  const leavesPage = useClientPage(data?.leaves ?? [], 20);
+  const attendancePage = useClientPage(data?.attendance ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -136,12 +141,13 @@ export function HrClient() {
               </Card>
             </div>
 
-            <Card title="Karyawan">
-              {data.employees.length === 0 ? (
+            <Card title={`Karyawan (${employeesPage.total})`}>
+              {employeesPage.total === 0 ? (
                 <EmptyState message="Belum ada karyawan" />
               ) : (
+                <>
                 <Table headers={["Kode", "Nama", "Posisi", "Gaji", "Status"]}>
-                  {data.employees.map((e) => (
+                  {employeesPage.items.map((e) => (
                     <tr key={e.id}>
                       <td className="px-3 py-2">{e.code}</td>
                       <td className="px-3 py-2">{e.name}</td>
@@ -155,6 +161,14 @@ export function HrClient() {
                     </tr>
                   ))}
                 </Table>
+                <PaginationBar
+                  page={employeesPage.page}
+                  totalPages={employeesPage.totalPages}
+                  total={employeesPage.total}
+                  limit={employeesPage.limit}
+                  onPageChange={employeesPage.setPage}
+                />
+                </>
               )}
             </Card>
 
@@ -201,11 +215,12 @@ export function HrClient() {
                     Ajukan cuti
                   </Button>
                 </form>
-                {data.leaves.length === 0 ? (
+                {leavesPage.total === 0 ? (
                   <EmptyState message="Belum ada cuti" />
                 ) : (
+                  <>
                   <Table headers={["Karyawan", "Tipe", "Hari", "Status", "Aksi"]}>
-                    {data.leaves.map((l) => (
+                    {leavesPage.items.map((l) => (
                       <tr key={l.id}>
                         <td className="px-3 py-2">{l.employeeName}</td>
                         <td className="px-3 py-2">{l.leaveType}</td>
@@ -232,14 +247,23 @@ export function HrClient() {
                       </tr>
                     ))}
                   </Table>
+                  <PaginationBar
+                    page={leavesPage.page}
+                    totalPages={leavesPage.totalPages}
+                    total={leavesPage.total}
+                    limit={leavesPage.limit}
+                    onPageChange={leavesPage.setPage}
+                  />
+                  </>
                 )}
               </Card>
-              <Card title="Absensi terbaru">
-                {data.attendance.length === 0 ? (
+              <Card title={`Absensi terbaru (${attendancePage.total})`}>
+                {attendancePage.total === 0 ? (
                   <EmptyState message="Belum ada absensi" />
                 ) : (
+                  <>
                   <Table headers={["Tanggal", "Karyawan", "Status"]}>
-                    {data.attendance.map((a) => (
+                    {attendancePage.items.map((a) => (
                       <tr key={a.id}>
                         <td className="px-3 py-2">{formatDateId(a.workDate)}</td>
                         <td className="px-3 py-2">{a.employeeName}</td>
@@ -249,6 +273,14 @@ export function HrClient() {
                       </tr>
                     ))}
                   </Table>
+                  <PaginationBar
+                    page={attendancePage.page}
+                    totalPages={attendancePage.totalPages}
+                    total={attendancePage.total}
+                    limit={attendancePage.limit}
+                    onPageChange={attendancePage.setPage}
+                  />
+                  </>
                 )}
               </Card>
             </div>

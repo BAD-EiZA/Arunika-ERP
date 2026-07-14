@@ -10,6 +10,7 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
@@ -24,6 +25,7 @@ import {
   usePurchaseOrderMutation,
   usePurchaseOrdersQuery,
 } from "@/hooks/use-erp-queries";
+import { useClientPage } from "@/hooks/use-client-page";
 import { formatDateId } from "@/lib/dates";
 import { formatIdr } from "@/lib/money";
 
@@ -32,6 +34,7 @@ export function PurchaseOrdersClient() {
   const mutation = usePurchaseOrderMutation();
   const data = query.data;
   const [lines, setLines] = useState<LineItemDraft[]>([]);
+  const ordersPage = useClientPage(data?.orders ?? [], 20);
 
   useEffect(() => {
     if (data?.products?.length && lines.length === 0) {
@@ -128,14 +131,15 @@ export function PurchaseOrdersClient() {
               </form>
             </Card>
 
-            <Card title="Daftar PO">
-              {data.orders.length === 0 ? (
+            <Card title={`Daftar PO (${ordersPage.total})`}>
+              {ordersPage.total === 0 ? (
                 <EmptyState message="Belum ada PO" />
               ) : (
+                <>
                 <Table
                   headers={["Nomor", "Pemasok", "Item", "Total", "Status", "Tanggal", "Aksi"]}
                 >
-                  {data.orders.map((po) => (
+                  {ordersPage.items.map((po) => (
                     <tr key={po.id}>
                       <td className="px-3 py-2 font-medium">
                         <a
@@ -186,6 +190,14 @@ export function PurchaseOrdersClient() {
                     </tr>
                   ))}
                 </Table>
+                <PaginationBar
+                  page={ordersPage.page}
+                  totalPages={ordersPage.totalPages}
+                  total={ordersPage.total}
+                  limit={ordersPage.limit}
+                  onPageChange={ordersPage.setPage}
+                />
+                </>
               )}
             </Card>
           </>

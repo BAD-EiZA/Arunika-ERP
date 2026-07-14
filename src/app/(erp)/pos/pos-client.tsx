@@ -11,10 +11,12 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
 import { MutationError, QueryBoundary } from "@/components/query-state";
+import { useClientPage } from "@/hooks/use-client-page";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { formatIdr } from "@/lib/money";
 
@@ -49,6 +51,7 @@ export function PosClient() {
   );
   const [productId, setProductId] = useState("");
   const [qty, setQty] = useState("1");
+  const ordersPage = useClientPage(openSession?.orders ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -177,19 +180,28 @@ export function PosClient() {
               )}
             </Card>
 
-            <Card title="Order sesi terbuka">
-              {!openSession || openSession.orders.length === 0 ? (
+            <Card title={`Order sesi terbuka (${ordersPage.total})`}>
+              {ordersPage.total === 0 ? (
                 <EmptyState message="Belum ada order" />
               ) : (
-                <Table headers={["Nomor", "Total", "Metode"]}>
-                  {openSession.orders.map((o) => (
-                    <tr key={o.id}>
-                      <td className="px-3 py-2">{o.number}</td>
-                      <td className="px-3 py-2">{formatIdr(o.total)}</td>
-                      <td className="px-3 py-2">{o.paymentMethod}</td>
-                    </tr>
-                  ))}
-                </Table>
+                <>
+                  <Table headers={["Nomor", "Total", "Metode"]}>
+                    {ordersPage.items.map((o) => (
+                      <tr key={o.id}>
+                        <td className="px-3 py-2">{o.number}</td>
+                        <td className="px-3 py-2">{formatIdr(o.total)}</td>
+                        <td className="px-3 py-2">{o.paymentMethod}</td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={ordersPage.page}
+                    totalPages={ordersPage.totalPages}
+                    total={ordersPage.total}
+                    limit={ordersPage.limit}
+                    onPageChange={ordersPage.setPage}
+                  />
+                </>
               )}
             </Card>
           </>

@@ -9,6 +9,7 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
@@ -17,6 +18,7 @@ import {
   useManufacturingMutation,
   useManufacturingQuery,
 } from "@/hooks/use-erp-queries";
+import { useClientPage } from "@/hooks/use-client-page";
 import { formToObject } from "@/lib/api-client";
 
 type MfgData = {
@@ -71,6 +73,7 @@ export function ManufacturingClient() {
   const query = useManufacturingQuery();
   const mutation = useManufacturingMutation();
   const data = query.data as MfgData | undefined;
+  const ordersPage = useClientPage(data?.orders ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -327,117 +330,126 @@ export function ManufacturingClient() {
               )}
             </Card>
 
-            <Card title="Production orders">
-              {data.orders.length === 0 ? (
+            <Card title={`Production orders (${ordersPage.total})`}>
+              {ordersPage.total === 0 ? (
                 <EmptyState message="Belum ada production order" />
               ) : (
-                <Table
-                  headers={[
-                    "Nomor",
-                    "FG",
-                    "Qty",
-                    "Costing",
-                    "Status",
-                    "Aksi",
-                  ]}
-                >
-                  {data.orders.map((o) => (
-                    <tr key={o.id}>
-                      <td className="px-3 py-2 font-medium">{o.number}</td>
-                      <td className="px-3 py-2">{o.finishedProduct.sku}</td>
-                      <td className="px-3 py-2 text-xs">
-                        {o.completedQty}/{o.plannedQty}
-                      </td>
-                      <td className="px-3 py-2 text-xs">
-                        M {o.materialCost} · L {o.laborCost} · O {o.overheadCost}
-                        <br />
-                        Total {o.totalCost} · Unit {o.unitCost}
-                      </td>
-                      <td className="px-3 py-2">
-                        <Badge>{o.status}</Badge>
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="flex flex-wrap gap-1">
-                          {o.status === "DRAFT" ? (
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              disabled={mutation.isPending}
-                              onClick={() =>
-                                mutation.mutate({ action: "release", id: o.id })
-                              }
-                            >
-                              Release
-                            </Button>
-                          ) : null}
-                          {["RELEASED", "IN_PROGRESS"].includes(o.status) ? (
-                            <>
+                <>
+                  <Table
+                    headers={[
+                      "Nomor",
+                      "FG",
+                      "Qty",
+                      "Costing",
+                      "Status",
+                      "Aksi",
+                    ]}
+                  >
+                    {ordersPage.items.map((o) => (
+                      <tr key={o.id}>
+                        <td className="px-3 py-2 font-medium">{o.number}</td>
+                        <td className="px-3 py-2">{o.finishedProduct.sku}</td>
+                        <td className="px-3 py-2 text-xs">
+                          {o.completedQty}/{o.plannedQty}
+                        </td>
+                        <td className="px-3 py-2 text-xs">
+                          M {o.materialCost} · L {o.laborCost} · O {o.overheadCost}
+                          <br />
+                          Total {o.totalCost} · Unit {o.unitCost}
+                        </td>
+                        <td className="px-3 py-2">
+                          <Badge>{o.status}</Badge>
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="flex flex-wrap gap-1">
+                            {o.status === "DRAFT" ? (
                               <Button
                                 type="button"
                                 variant="secondary"
                                 disabled={mutation.isPending}
                                 onClick={() =>
-                                  mutation.mutate({
-                                    action: "issue",
-                                    id: o.id,
-                                    warehouseId:
-                                      o.warehouseId || data.warehouses[0]?.id,
-                                  })
+                                  mutation.mutate({ action: "release", id: o.id })
                                 }
                               >
-                                Issue mat.
+                                Release
                               </Button>
-                              {o.steps[0] ? (
+                            ) : null}
+                            {["RELEASED", "IN_PROGRESS"].includes(o.status) ? (
+                              <>
                                 <Button
                                   type="button"
                                   variant="secondary"
                                   disabled={mutation.isPending}
                                   onClick={() =>
                                     mutation.mutate({
-                                      action: "labor",
+                                      action: "issue",
                                       id: o.id,
-                                      stepId: o.steps[0].id,
-                                      minutes: 60,
+                                      warehouseId:
+                                        o.warehouseId || data.warehouses[0]?.id,
                                     })
                                   }
                                 >
-                                  Labor 60m
+                                  Issue mat.
                                 </Button>
-                              ) : null}
+                                {o.steps[0] ? (
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    disabled={mutation.isPending}
+                                    onClick={() =>
+                                      mutation.mutate({
+                                        action: "labor",
+                                        id: o.id,
+                                        stepId: o.steps[0].id,
+                                        minutes: 60,
+                                      })
+                                    }
+                                  >
+                                    Labor 60m
+                                  </Button>
+                                ) : null}
+                                <Button
+                                  type="button"
+                                  disabled={mutation.isPending}
+                                  onClick={() =>
+                                    mutation.mutate({
+                                      action: "complete",
+                                      id: o.id,
+                                      warehouseId:
+                                        o.warehouseId || data.warehouses[0]?.id,
+                                      quantity: o.plannedQty,
+                                    })
+                                  }
+                                >
+                                  Complete
+                                </Button>
+                              </>
+                            ) : null}
+                            {["COMPLETED", "IN_PROGRESS"].includes(o.status) ? (
                               <Button
                                 type="button"
+                                variant="ghost"
                                 disabled={mutation.isPending}
                                 onClick={() =>
-                                  mutation.mutate({
-                                    action: "complete",
-                                    id: o.id,
-                                    warehouseId:
-                                      o.warehouseId || data.warehouses[0]?.id,
-                                    quantity: o.plannedQty,
-                                  })
+                                  mutation.mutate({ action: "close", id: o.id })
                                 }
                               >
-                                Complete
+                                Close
                               </Button>
-                            </>
-                          ) : null}
-                          {["COMPLETED", "IN_PROGRESS"].includes(o.status) ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              disabled={mutation.isPending}
-                              onClick={() =>
-                                mutation.mutate({ action: "close", id: o.id })
-                              }
-                            >
-                              Close
-                            </Button>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={ordersPage.page}
+                    totalPages={ordersPage.totalPages}
+                    total={ordersPage.total}
+                    limit={ordersPage.limit}
+                    onPageChange={ordersPage.setPage}
+                  />
+                </>
               )}
             </Card>
           </>

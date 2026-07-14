@@ -395,7 +395,7 @@ export async function reportProductionLabor(input: {
         status: order.status === "RELEASED" ? "IN_PROGRESS" : order.status,
       },
     });
-  });
+  }, { maxWait: 15000, timeout: 60000 });
 
   return { ok: true };
 }
@@ -492,7 +492,7 @@ export async function completeProductionOrder(input: {
     });
 
     return updated;
-  });
+  }, { maxWait: 15000, timeout: 60000 });
 }
 
 export async function getProductionCosting(

@@ -1,7 +1,8 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost } from "@/lib/api-client";
+import { withPageQuery } from "@/lib/pagination";
 import { queryKeys } from "@/lib/query-keys";
 
 export type DashboardData = {
@@ -35,6 +36,13 @@ export type DashboardData = {
   }>;
 };
 
+export type PageMetaFields = {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+};
+
 export type ProductsData = {
   products: Array<{
     id: string;
@@ -49,7 +57,7 @@ export type ProductsData = {
   }>;
   units: Array<{ id: string; name: string; symbol: string }>;
   categories: Array<{ id: string; name: string; code: string }>;
-};
+} & PageMetaFields;
 
 export type CustomersData = {
   customers: Array<{
@@ -60,7 +68,7 @@ export type CustomersData = {
     phone: string | null;
     paymentTermDays: number;
   }>;
-};
+} & PageMetaFields;
 
 export type SuppliersData = {
   suppliers: Array<{
@@ -70,7 +78,7 @@ export type SuppliersData = {
     email: string | null;
     phone: string | null;
   }>;
-};
+} & PageMetaFields;
 
 export type StockData = {
   balances: Array<{
@@ -101,10 +109,12 @@ export function useDashboardQuery() {
   });
 }
 
-export function useProductsQuery() {
+export function useProductsQuery(page = 1, limit = 20) {
   return useQuery({
-    queryKey: queryKeys.products.list(),
-    queryFn: () => apiGet<ProductsData>("/api/erp/products"),
+    queryKey: queryKeys.products.list(page, limit),
+    queryFn: () =>
+      apiGet<ProductsData>(withPageQuery("/api/erp/products", page, limit)),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -131,10 +141,12 @@ export function useCreateCategoryMutation() {
   });
 }
 
-export function useCustomersQuery() {
+export function useCustomersQuery(page = 1, limit = 20) {
   return useQuery({
-    queryKey: queryKeys.customers.list(),
-    queryFn: () => apiGet<CustomersData>("/api/erp/customers"),
+    queryKey: queryKeys.customers.list(page, limit),
+    queryFn: () =>
+      apiGet<CustomersData>(withPageQuery("/api/erp/customers", page, limit)),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -150,10 +162,12 @@ export function useCreateCustomerMutation() {
   });
 }
 
-export function useSuppliersQuery() {
+export function useSuppliersQuery(page = 1, limit = 20) {
   return useQuery({
-    queryKey: queryKeys.suppliers.list(),
-    queryFn: () => apiGet<SuppliersData>("/api/erp/suppliers"),
+    queryKey: queryKeys.suppliers.list(page, limit),
+    queryFn: () =>
+      apiGet<SuppliersData>(withPageQuery("/api/erp/suppliers", page, limit)),
+    placeholderData: keepPreviousData,
   });
 }
 

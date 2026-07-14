@@ -1,8 +1,17 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Badge, Button, Card, EmptyState, PageHeader, Table } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  PageHeader,
+  PaginationBar,
+  Table,
+} from "@/components/ui";
 import { MutationError, QueryBoundary } from "@/components/query-state";
+import { useClientPage } from "@/hooks/use-client-page";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { formatDateTimeId } from "@/lib/dates";
 
@@ -32,6 +41,7 @@ export function NotificationsClient() {
   });
 
   const data = query.data;
+  const page = useClientPage(data?.notifications ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -64,12 +74,13 @@ export function NotificationsClient() {
         error={query.error}
         onRetry={() => void query.refetch()}
       >
-        <Card title="Kotak masuk">
-          {!data || data.notifications.length === 0 ? (
+        <Card title={`Kotak masuk (${page.total})`}>
+          {page.total === 0 ? (
             <EmptyState message="Belum ada notifikasi" />
           ) : (
+            <>
             <Table headers={["Waktu", "Judul", "Pesan", "Status", "Aksi"]}>
-              {data.notifications.map((n) => (
+              {page.items.map((n) => (
                 <tr key={n.id}>
                   <td className="px-3 py-2 text-xs">
                     {formatDateTimeId(n.createdAt)}
@@ -97,6 +108,14 @@ export function NotificationsClient() {
                 </tr>
               ))}
             </Table>
+            <PaginationBar
+              page={page.page}
+              totalPages={page.totalPages}
+              total={page.total}
+              limit={page.limit}
+              onPageChange={page.setPage}
+            />
+            </>
           )}
         </Card>
       </QueryBoundary>

@@ -1,16 +1,18 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Button, Card, EmptyState } from "@/components/ui";
-import { Spinner } from "@heroui/react";
+import {
+  AppAlert,
+  Button,
+  Card,
+  EmptyState,
+  LoadingBlock,
+} from "@/components/ui";
 
 export function QueryLoading({ label = "Memuat data..." }: { label?: string }) {
   return (
     <Card>
-      <div className="flex items-center gap-3 py-8 text-sm text-muted">
-        <Spinner size="sm" />
-        <span>{label}</span>
-      </div>
+      <LoadingBlock label={label} />
     </Card>
   );
 }
@@ -24,8 +26,12 @@ export function QueryError({
 }) {
   return (
     <Card>
-      <div className="space-y-3 py-4">
-        <EmptyState message={message || "Gagal memuat data"} />
+      <div className="space-y-3 py-2">
+        <AppAlert
+          status="danger"
+          title="Gagal memuat data"
+          description={message || "Terjadi kesalahan. Coba lagi."}
+        />
         {onRetry ? (
           <Button type="button" variant="secondary" onClick={onRetry}>
             Coba lagi
@@ -41,9 +47,7 @@ export function MutationError({ error }: { error: unknown }) {
   const message =
     error instanceof Error ? error.message : "Terjadi kesalahan";
   return (
-    <p className="rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger">
-      {message}
-    </p>
+    <AppAlert status="danger" title="Gagal" description={message} />
   );
 }
 

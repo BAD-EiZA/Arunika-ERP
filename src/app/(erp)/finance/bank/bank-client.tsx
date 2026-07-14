@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import {
   Badge,
   Button,
@@ -9,6 +10,7 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
@@ -17,6 +19,7 @@ import {
   useFinanceBankMutation,
   useFinanceBankQuery,
 } from "@/hooks/use-erp-queries";
+import { useClientPage } from "@/hooks/use-client-page";
 import { formToObject } from "@/lib/api-client";
 import { formatDateId } from "@/lib/dates";
 import { formatIdr } from "@/lib/money";
@@ -45,6 +48,20 @@ export function BankClient() {
   const query = useFinanceBankQuery();
   const mutation = useFinanceBankMutation();
   const data = query.data as BankData | undefined;
+  const accountsPage = useClientPage(data?.accounts ?? [], 20);
+  const statementLines = useMemo(
+    () =>
+      (data?.accounts ?? []).flatMap((a) =>
+        a.statements.flatMap((s) =>
+          s.lines.map((l) => ({
+            ...l,
+            accountCode: a.code,
+          })),
+        ),
+      ),
+    [data?.accounts],
+  );
+  const linesPage = useClientPage(statementLines, 20);
 
   return (
     <div className="space-y-6">
@@ -143,46 +160,60 @@ export function BankClient() {
                 )}
               </Card>
             </div>
-            <Card title="Rekening">
-              {data.accounts.length === 0 ? (
+            <Card title={`Rekening (${accountsPage.total})`}>
+              {accountsPage.total === 0 ? (
                 <EmptyState message="Belum ada rekening" />
               ) : (
-                <Table headers={["Kode", "Nama", "Bank", "No. rek", "Statement"]}>
-                  {data.accounts.map((a) => (
-                    <tr key={a.id}>
-                      <td className="px-3 py-2">{a.code}</td>
-                      <td className="px-3 py-2">{a.name}</td>
-                      <td className="px-3 py-2">{a.bankName || "-"}</td>
-                      <td className="px-3 py-2">{a.accountNumber || "-"}</td>
-                      <td className="px-3 py-2">{a.statements.length}</td>
-                    </tr>
-                  ))}
-                </Table>
+                <>
+                  <Table headers={["Kode", "Nama", "Bank", "No. rek", "Statement"]}>
+                    {accountsPage.items.map((a) => (
+                      <tr key={a.id}>
+                        <td className="px-3 py-2">{a.code}</td>
+                        <td className="px-3 py-2">{a.name}</td>
+                        <td className="px-3 py-2">{a.bankName || "-"}</td>
+                        <td className="px-3 py-2">{a.accountNumber || "-"}</td>
+                        <td className="px-3 py-2">{a.statements.length}</td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={accountsPage.page}
+                    totalPages={accountsPage.totalPages}
+                    total={accountsPage.total}
+                    limit={accountsPage.limit}
+                    onPageChange={accountsPage.setPage}
+                  />
+                </>
               )}
             </Card>
-            <Card title="Baris statement">
-              {data.accounts.every((a) => a.statements.length === 0) ? (
+            <Card title={`Baris statement (${linesPage.total})`}>
+              {linesPage.total === 0 ? (
                 <EmptyState message="Belum ada statement" />
               ) : (
-                <Table headers={["Rekening", "Tanggal", "Deskripsi", "Jumlah", "Rekonsiliasi"]}>
-                  {data.accounts.flatMap((a) =>
-                    a.statements.flatMap((s) =>
-                      s.lines.map((l) => (
-                        <tr key={l.id}>
-                          <td className="px-3 py-2">{a.code}</td>
-                          <td className="px-3 py-2">{formatDateId(l.lineDate)}</td>
-                          <td className="px-3 py-2">{l.description || "-"}</td>
-                          <td className="px-3 py-2">{formatIdr(l.amount)}</td>
-                          <td className="px-3 py-2">
-                            <Badge tone={l.isReconciled ? "success" : "warning"}>
-                              {l.isReconciled ? "Ya" : "Belum"}
-                            </Badge>
-                          </td>
-                        </tr>
-                      )),
-                    ),
-                  )}
-                </Table>
+                <>
+                  <Table headers={["Rekening", "Tanggal", "Deskripsi", "Jumlah", "Rekonsiliasi"]}>
+                    {linesPage.items.map((l) => (
+                      <tr key={l.id}>
+                        <td className="px-3 py-2">{l.accountCode}</td>
+                        <td className="px-3 py-2">{formatDateId(l.lineDate)}</td>
+                        <td className="px-3 py-2">{l.description || "-"}</td>
+                        <td className="px-3 py-2">{formatIdr(l.amount)}</td>
+                        <td className="px-3 py-2">
+                          <Badge tone={l.isReconciled ? "success" : "warning"}>
+                            {l.isReconciled ? "Ya" : "Belum"}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={linesPage.page}
+                    totalPages={linesPage.totalPages}
+                    total={linesPage.total}
+                    limit={linesPage.limit}
+                    onPageChange={linesPage.setPage}
+                  />
+                </>
               )}
             </Card>
           </>

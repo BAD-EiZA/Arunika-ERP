@@ -9,11 +9,13 @@ import {
   FormGrid,
   Input,
   PageHeader,
+  PaginationBar,
   Select,
   Table,
 } from "@/components/ui";
 import { MutationError, QueryBoundary } from "@/components/query-state";
 import { useRfqMutation, useRfqQuery } from "@/hooks/use-erp-queries";
+import { useClientPage } from "@/hooks/use-client-page";
 import { formToObject } from "@/lib/api-client";
 import { formatIdr } from "@/lib/money";
 
@@ -45,6 +47,7 @@ export function RfqClient() {
   const query = useRfqQuery();
   const mutation = useRfqMutation();
   const data = query.data as RfqData | undefined;
+  const rfqsPage = useClientPage(data?.rfqs ?? [], 20);
 
   return (
     <div className="space-y-6">
@@ -238,24 +241,33 @@ export function RfqClient() {
               )}
             </Card>
 
-            <Card title="Daftar RFQ">
-              {data.rfqs.length === 0 ? (
+            <Card title={`Daftar RFQ (${rfqsPage.total})`}>
+              {rfqsPage.total === 0 ? (
                 <EmptyState message="Belum ada RFQ" />
               ) : (
-                <Table headers={["Nomor", "Status", "Vendor", "Quotations"]}>
-                  {data.rfqs.map((r) => (
-                    <tr key={r.id}>
-                      <td className="px-3 py-2">{r.number}</td>
-                      <td className="px-3 py-2">
-                        <Badge>{r.status}</Badge>
-                      </td>
-                      <td className="px-3 py-2">
-                        {r.vendors.map((v) => v.supplierName).join(", ")}
-                      </td>
-                      <td className="px-3 py-2">{r.quotationCount}</td>
-                    </tr>
-                  ))}
-                </Table>
+                <>
+                  <Table headers={["Nomor", "Status", "Vendor", "Quotations"]}>
+                    {rfqsPage.items.map((r) => (
+                      <tr key={r.id}>
+                        <td className="px-3 py-2">{r.number}</td>
+                        <td className="px-3 py-2">
+                          <Badge>{r.status}</Badge>
+                        </td>
+                        <td className="px-3 py-2">
+                          {r.vendors.map((v) => v.supplierName).join(", ")}
+                        </td>
+                        <td className="px-3 py-2">{r.quotationCount}</td>
+                      </tr>
+                    ))}
+                  </Table>
+                  <PaginationBar
+                    page={rfqsPage.page}
+                    totalPages={rfqsPage.totalPages}
+                    total={rfqsPage.total}
+                    limit={rfqsPage.limit}
+                    onPageChange={rfqsPage.setPage}
+                  />
+                </>
               )}
             </Card>
           </>
