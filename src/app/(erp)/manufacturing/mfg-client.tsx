@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import {
   Badge,
   Button,
@@ -8,9 +9,11 @@ import {
   Field,
   FormGrid,
   Input,
+  ListPageShell,
   PageHeader,
   PaginationBar,
   Select,
+  StatCard,
   Table,
 } from "@/components/ui";
 import { MutationError, QueryBoundary } from "@/components/query-state";
@@ -20,6 +23,13 @@ import {
 } from "@/hooks/use-erp-queries";
 import { useClientPage } from "@/hooks/use-client-page";
 import { formToObject } from "@/lib/api-client";
+import {
+  Factory,
+  Layers,
+  Plus,
+  Route,
+  Settings2,
+} from "lucide-react";
 
 type MfgData = {
   workCenters: Array<{ id: string; code: string; name: string }>;
@@ -69,17 +79,83 @@ type MfgData = {
   warehouses: Array<{ id: string; code: string; name: string }>;
 };
 
+type FormMode = "none" | "wc" | "bom" | "routing" | "order";
+
+function mfgTone(
+  status: string,
+): "default" | "success" | "warning" | "danger" {
+  const s = status.toUpperCase();
+  if (s === "COMPLETED" || s === "CLOSED") return "success";
+  if (s === "RELEASED" || s === "IN_PROGRESS") return "warning";
+  if (s === "CANCELLED") return "danger";
+  return "default";
+}
+
 export function ManufacturingClient() {
   const query = useManufacturingQuery();
   const mutation = useManufacturingMutation();
   const data = query.data as MfgData | undefined;
+  const [formMode, setFormMode] = useState<FormMode>("none");
   const ordersPage = useClientPage(data?.orders ?? [], 20);
 
+  const stats = useMemo(() => {
+    const orders = data?.orders ?? [];
+    return {
+      wc: data?.workCenters.length ?? 0,
+      boms: data?.boms.length ?? 0,
+      routings: data?.routings.length ?? 0,
+      orders: orders.length,
+      open: orders.filter((o) =>
+        ["DRAFT", "RELEASED", "IN_PROGRESS"].includes(o.status),
+      ).length,
+    };
+  }, [data]);
+
+  function toggle(mode: FormMode) {
+    setFormMode((m) => (m === mode ? "none" : mode));
+  }
+
   return (
-    <div className="space-y-6">
+    <ListPageShell>
       <PageHeader
         title="Manufaktur"
-        description="Fase 8 · BOM, routing, production order"
+        description="BOM · routing · production order · issue · complete"
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant={formMode === "wc" ? "primary" : "secondary"}
+              onClick={() => toggle("wc")}
+            >
+              <Settings2 className="mr-1.5 size-4" />
+              WC
+            </Button>
+            <Button
+              type="button"
+              variant={formMode === "bom" ? "primary" : "secondary"}
+              onClick={() => toggle("bom")}
+            >
+              <Layers className="mr-1.5 size-4" />
+              BOM
+            </Button>
+            <Button
+              type="button"
+              variant={formMode === "routing" ? "primary" : "secondary"}
+              onClick={() => toggle("routing")}
+            >
+              <Route className="mr-1.5 size-4" />
+              Routing
+            </Button>
+            <Button
+              type="button"
+              variant={formMode === "order" ? "secondary" : "primary"}
+              onClick={() => toggle("order")}
+            >
+              <Plus className="mr-1.5 size-4" />
+              {formMode === "order" ? "Tutup" : "Buat MO"}
+            </Button>
+          </div>
+        }
       />
 
       <QueryBoundary
@@ -87,19 +163,38 @@ export function ManufacturingClient() {
         isError={query.isError}
         error={query.error}
         onRetry={() => void query.refetch()}
+        loadingLabel="Memuat manufaktur..."
       >
         {data ? (
           <>
-            <div className="grid gap-4 xl:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <StatCard label="Work center" value={stats.wc} icon={Settings2} />
+              <StatCard label="BOM" value={stats.boms} icon={Layers} />
+              <StatCard label="Routing" value={stats.routings} icon={Route} />
+              <StatCard label="MO" value={stats.orders} icon={Factory} />
+              <StatCard label="MO terbuka" value={stats.open} />
+            </div>
+
+            <MutationError error={mutation.error} />
+
+            {formMode === "wc" ? (
               <Card title="Work center">
                 <form
                   className="space-y-3"
                   onSubmit={(e) => {
                     e.preventDefault();
-                    mutation.mutate({
-                      action: "work_center",
-                      ...formToObject(e.currentTarget),
-                    });
+                    mutation.mutate(
+                      {
+                        action: "work_center",
+                        ...formToObject(e.currentTarget),
+                      },
+                      {
+                        onSuccess: () => {
+                          e.currentTarget.reset();
+                          setFormMode("none");
+                        },
+                      },
+                    );
                   }}
                 >
                   <FormGrid>
@@ -110,42 +205,63 @@ export function ManufacturingClient() {
                       <Input name="name" required />
                     </Field>
                   </FormGrid>
-                  <Button type="submit" disabled={mutation.isPending}>
-                    Simpan WC
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="submit" disabled={mutation.isPending}>
+                      Simpan WC
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setFormMode("none")}
+                    >
+                      Batal
+                    </Button>
+                  </div>
                 </form>
                 {data.workCenters.length > 0 ? (
                   <Table headers={["Kode", "Nama"]}>
                     {data.workCenters.map((w) => (
                       <tr key={w.id}>
-                        <td className="px-3 py-2">{w.code}</td>
+                        <td className="px-3 py-2 font-medium text-[#0F4C75]">
+                          {w.code}
+                        </td>
                         <td className="px-3 py-2">{w.name}</td>
                       </tr>
                     ))}
                   </Table>
                 ) : null}
               </Card>
+            ) : null}
 
+            {formMode === "bom" ? (
               <Card title="Bill of Materials">
                 <form
                   className="space-y-3"
                   onSubmit={(e) => {
                     e.preventDefault();
                     const body = formToObject(e.currentTarget);
-                    mutation.mutate({
-                      action: "bom",
-                      code: body.code,
-                      name: body.name,
-                      finishedProductId: body.finishedProductId,
-                      quantity: body.quantity || 1,
-                      items: [
-                        {
-                          productId: body.componentId,
-                          quantity: body.componentQty,
-                          scrapPct: body.scrapPct || 0,
+                    mutation.mutate(
+                      {
+                        action: "bom",
+                        code: body.code,
+                        name: body.name,
+                        finishedProductId: body.finishedProductId,
+                        quantity: body.quantity || 1,
+                        items: [
+                          {
+                            productId: body.componentId,
+                            quantity: body.componentQty,
+                            scrapPct: body.scrapPct || 0,
+                          },
+                        ],
+                      },
+                      {
+                        onSuccess: () => {
+                          e.currentTarget.reset();
+                          setFormMode("none");
                         },
-                      ],
-                    });
+                      },
+                    );
                   }}
                 >
                   <FormGrid>
@@ -166,7 +282,12 @@ export function ManufacturingClient() {
                       </Select>
                     </Field>
                     <Field label="Qty output">
-                      <Input name="quantity" type="number" step="0.0001" defaultValue="1" />
+                      <Input
+                        name="quantity"
+                        type="number"
+                        step="0.0001"
+                        defaultValue="1"
+                      />
                     </Field>
                     <Field label="Komponen">
                       <Select name="componentId" required>
@@ -179,38 +300,67 @@ export function ManufacturingClient() {
                       </Select>
                     </Field>
                     <Field label="Qty komponen">
-                      <Input name="componentQty" type="number" step="0.0001" required />
+                      <Input
+                        name="componentQty"
+                        type="number"
+                        step="0.0001"
+                        required
+                      />
                     </Field>
                     <Field label="Scrap %">
-                      <Input name="scrapPct" type="number" step="0.01" defaultValue="0" />
+                      <Input
+                        name="scrapPct"
+                        type="number"
+                        step="0.01"
+                        defaultValue="0"
+                      />
                     </Field>
                   </FormGrid>
-                  <Button type="submit" disabled={mutation.isPending}>
-                    Simpan BOM
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="submit" disabled={mutation.isPending}>
+                      Simpan BOM
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setFormMode("none")}
+                    >
+                      Batal
+                    </Button>
+                  </div>
                 </form>
               </Card>
+            ) : null}
 
+            {formMode === "routing" ? (
               <Card title="Routing">
                 <form
                   className="space-y-3"
                   onSubmit={(e) => {
                     e.preventDefault();
                     const body = formToObject(e.currentTarget);
-                    mutation.mutate({
-                      action: "routing",
-                      code: body.code,
-                      name: body.name,
-                      steps: [
-                        {
-                          workCenterId: body.workCenterId,
-                          sequence: 10,
-                          name: body.stepName || "Operasi 10",
-                          setupMinutes: body.setupMinutes || 0,
-                          runMinutes: body.runMinutes || 0,
+                    mutation.mutate(
+                      {
+                        action: "routing",
+                        code: body.code,
+                        name: body.name,
+                        steps: [
+                          {
+                            workCenterId: body.workCenterId,
+                            sequence: 10,
+                            name: body.stepName || "Operasi 10",
+                            setupMinutes: body.setupMinutes || 0,
+                            runMinutes: body.runMinutes || 0,
+                          },
+                        ],
+                      },
+                      {
+                        onSuccess: () => {
+                          e.currentTarget.reset();
+                          setFormMode("none");
                         },
-                      ],
-                    });
+                      },
+                    );
                   }}
                 >
                   <FormGrid>
@@ -234,27 +384,54 @@ export function ManufacturingClient() {
                       <Input name="stepName" defaultValue="Operasi 10" />
                     </Field>
                     <Field label="Setup (menit)">
-                      <Input name="setupMinutes" type="number" defaultValue="0" />
+                      <Input
+                        name="setupMinutes"
+                        type="number"
+                        defaultValue="0"
+                      />
                     </Field>
                     <Field label="Run/unit (menit)">
-                      <Input name="runMinutes" type="number" defaultValue="1" />
+                      <Input
+                        name="runMinutes"
+                        type="number"
+                        defaultValue="1"
+                      />
                     </Field>
                   </FormGrid>
-                  <Button type="submit" disabled={mutation.isPending}>
-                    Simpan routing
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="submit" disabled={mutation.isPending}>
+                      Simpan routing
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setFormMode("none")}
+                    >
+                      Batal
+                    </Button>
+                  </div>
                 </form>
               </Card>
+            ) : null}
 
+            {formMode === "order" ? (
               <Card title="Production order">
                 <form
                   className="space-y-3"
                   onSubmit={(e) => {
                     e.preventDefault();
-                    mutation.mutate({
-                      action: "create_order",
-                      ...formToObject(e.currentTarget),
-                    });
+                    mutation.mutate(
+                      {
+                        action: "create_order",
+                        ...formToObject(e.currentTarget),
+                      },
+                      {
+                        onSuccess: () => {
+                          e.currentTarget.reset();
+                          setFormMode("none");
+                        },
+                      },
+                    );
                   }}
                 >
                   <FormGrid>
@@ -289,7 +466,10 @@ export function ManufacturingClient() {
                       </Select>
                     </Field>
                     <Field label="Gudang">
-                      <Select name="warehouseId" defaultValue={data.warehouses[0]?.id}>
+                      <Select
+                        name="warehouseId"
+                        defaultValue={data.warehouses[0]?.id}
+                      >
                         {data.warehouses.map((w) => (
                           <option key={w.id} value={w.id}>
                             {w.code}
@@ -298,32 +478,63 @@ export function ManufacturingClient() {
                       </Select>
                     </Field>
                     <Field label="Qty rencana">
-                      <Input name="plannedQty" type="number" step="0.0001" required />
+                      <Input
+                        name="plannedQty"
+                        type="number"
+                        step="0.0001"
+                        required
+                      />
                     </Field>
                   </FormGrid>
-                  <MutationError error={mutation.error} />
-                  <Button type="submit" disabled={mutation.isPending}>
-                    Buat MO
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="submit" disabled={mutation.isPending}>
+                      Buat MO
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setFormMode("none")}
+                    >
+                      Batal
+                    </Button>
+                  </div>
                 </form>
               </Card>
-            </div>
+            ) : null}
 
-            <Card title="Daftar BOM">
+            <Card title={`Daftar BOM (${data.boms.length})`}>
               {data.boms.length === 0 ? (
-                <EmptyState message="Belum ada BOM" />
+                <EmptyState
+                  compact
+                  icon={Layers}
+                  title="Belum ada BOM"
+                  message="Definisikan finished good dan komponen."
+                  action={
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setFormMode("bom")}
+                    >
+                      BOM
+                    </Button>
+                  }
+                />
               ) : (
                 <Table headers={["Kode", "FG", "Komponen", "Ver"]}>
                   {data.boms.map((b) => (
                     <tr key={b.id}>
-                      <td className="px-3 py-2">{b.code}</td>
+                      <td className="px-3 py-2 font-medium text-[#0F4C75]">
+                        {b.code}
+                      </td>
                       <td className="px-3 py-2">
                         {b.finishedProduct.sku} — {b.finishedProduct.name}
                       </td>
-                      <td className="px-3 py-2 text-xs">
-                        {b.items.map((i) => `${i.sku}×${i.quantity}`).join(", ")}
+                      <td className="max-w-[14rem] truncate px-3 py-2 text-xs text-muted">
+                        {b.items
+                          .map((i) => `${i.sku}×${i.quantity}`)
+                          .join(", ")}
                       </td>
-                      <td className="px-3 py-2">v{b.version}</td>
+                      <td className="px-3 py-2 tabular-nums">v{b.version}</td>
                     </tr>
                   ))}
                 </Table>
@@ -332,7 +543,22 @@ export function ManufacturingClient() {
 
             <Card title={`Production orders (${ordersPage.total})`}>
               {ordersPage.total === 0 ? (
-                <EmptyState message="Belum ada production order" />
+                <EmptyState
+                  compact
+                  icon={Factory}
+                  title="Belum ada production order"
+                  message="Buat MO dari finished good + BOM/routing."
+                  action={
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setFormMode("order")}
+                    >
+                      <Plus className="mr-1.5 size-4" />
+                      Buat MO
+                    </Button>
+                  }
+                />
               ) : (
                 <>
                   <Table
@@ -347,18 +573,21 @@ export function ManufacturingClient() {
                   >
                     {ordersPage.items.map((o) => (
                       <tr key={o.id}>
-                        <td className="px-3 py-2 font-medium">{o.number}</td>
+                        <td className="px-3 py-2 font-medium text-[#0F4C75]">
+                          {o.number}
+                        </td>
                         <td className="px-3 py-2">{o.finishedProduct.sku}</td>
-                        <td className="px-3 py-2 text-xs">
+                        <td className="px-3 py-2 text-xs tabular-nums">
                           {o.completedQty}/{o.plannedQty}
                         </td>
-                        <td className="px-3 py-2 text-xs">
-                          M {o.materialCost} · L {o.laborCost} · O {o.overheadCost}
+                        <td className="px-3 py-2 text-xs text-muted">
+                          M {o.materialCost} · L {o.laborCost} · O{" "}
+                          {o.overheadCost}
                           <br />
                           Total {o.totalCost} · Unit {o.unitCost}
                         </td>
                         <td className="px-3 py-2">
-                          <Badge>{o.status}</Badge>
+                          <Badge tone={mfgTone(o.status)}>{o.status}</Badge>
                         </td>
                         <td className="px-3 py-2">
                           <div className="flex flex-wrap gap-1">
@@ -368,7 +597,10 @@ export function ManufacturingClient() {
                                 variant="secondary"
                                 disabled={mutation.isPending}
                                 onClick={() =>
-                                  mutation.mutate({ action: "release", id: o.id })
+                                  mutation.mutate({
+                                    action: "release",
+                                    id: o.id,
+                                  })
                                 }
                               >
                                 Release
@@ -385,7 +617,8 @@ export function ManufacturingClient() {
                                       action: "issue",
                                       id: o.id,
                                       warehouseId:
-                                        o.warehouseId || data.warehouses[0]?.id,
+                                        o.warehouseId ||
+                                        data.warehouses[0]?.id,
                                     })
                                   }
                                 >
@@ -416,7 +649,8 @@ export function ManufacturingClient() {
                                       action: "complete",
                                       id: o.id,
                                       warehouseId:
-                                        o.warehouseId || data.warehouses[0]?.id,
+                                        o.warehouseId ||
+                                        data.warehouses[0]?.id,
                                       quantity: o.plannedQty,
                                     })
                                   }
@@ -425,13 +659,18 @@ export function ManufacturingClient() {
                                 </Button>
                               </>
                             ) : null}
-                            {["COMPLETED", "IN_PROGRESS"].includes(o.status) ? (
+                            {["COMPLETED", "IN_PROGRESS"].includes(
+                              o.status,
+                            ) ? (
                               <Button
                                 type="button"
                                 variant="ghost"
                                 disabled={mutation.isPending}
                                 onClick={() =>
-                                  mutation.mutate({ action: "close", id: o.id })
+                                  mutation.mutate({
+                                    action: "close",
+                                    id: o.id,
+                                  })
                                 }
                               >
                                 Close
@@ -455,6 +694,6 @@ export function ManufacturingClient() {
           </>
         ) : null}
       </QueryBoundary>
-    </div>
+    </ListPageShell>
   );
 }

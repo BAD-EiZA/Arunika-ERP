@@ -1,9 +1,18 @@
 "use client";
 
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Badge, Card, PageHeader, Table } from "@/components/ui";
+import {
+  Badge,
+  Card,
+  ListPageShell,
+  PageHeader,
+  StatCard,
+  Table,
+} from "@/components/ui";
 import { QueryBoundary } from "@/components/query-state";
 import { apiGet } from "@/lib/api-client";
+import { Activity, CheckCircle2, Layers } from "lucide-react";
 
 type Readiness = {
   ok: boolean;
@@ -19,20 +28,49 @@ export function ReadinessClient() {
     queryFn: () => apiGet<Readiness>("/api/health/ready"),
   });
 
+  const stats = useMemo(() => {
+    const checks = query.data?.checks ?? [];
+    const pass = checks.filter((c) => c.ok).length;
+    return {
+      pass,
+      fail: checks.length - pass,
+      modules: query.data?.modules.length ?? 0,
+    };
+  }, [query.data]);
+
   return (
-    <div className="space-y-6">
+    <ListPageShell>
       <PageHeader
         title="Production readiness"
-        description="Fase 14 · health & module checklist"
+        description="Health checks & module checklist"
       />
       <QueryBoundary
         isLoading={query.isLoading}
         isError={query.isError}
         error={query.error}
         onRetry={() => void query.refetch()}
+        loadingLabel="Memuat readiness..."
       >
         {query.data ? (
           <>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard
+                label="Status"
+                value={query.data.ok ? "READY" : "NOT READY"}
+                icon={Activity}
+              />
+              <StatCard
+                label="Checks OK"
+                value={stats.pass}
+                icon={CheckCircle2}
+              />
+              <StatCard label="Checks fail" value={stats.fail} />
+              <StatCard
+                label="Modules"
+                value={stats.modules}
+                icon={Layers}
+              />
+            </div>
             <Card title="Status">
               <div className="flex flex-wrap items-center gap-3 text-sm">
                 <Badge tone={query.data.ok ? "success" : "danger"}>
@@ -48,7 +86,9 @@ export function ReadinessClient() {
               <Table headers={["Check", "Status", "Detail"]}>
                 {query.data.checks.map((c) => (
                   <tr key={c.name}>
-                    <td className="px-3 py-2">{c.name}</td>
+                    <td className="px-3 py-2 font-medium text-[#0F4C75]">
+                      {c.name}
+                    </td>
                     <td className="px-3 py-2">
                       <Badge tone={c.ok ? "success" : "danger"}>
                         {c.ok ? "OK" : "FAIL"}
@@ -71,6 +111,6 @@ export function ReadinessClient() {
           </>
         ) : null}
       </QueryBoundary>
-    </div>
+    </ListPageShell>
   );
 }

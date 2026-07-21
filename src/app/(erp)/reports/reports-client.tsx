@@ -11,6 +11,7 @@ import {
   Field,
   FormGrid,
   Input,
+  ListPageShell,
   PageHeader,
   Table,
 } from "@/components/ui";
@@ -135,7 +136,7 @@ export function ReportsClient() {
   const data = query.data;
 
   return (
-    <div className="space-y-6">
+    <ListPageShell>
       <PageHeader
         title="Laporan keuangan"
         description="TB · P/L · Neraca · Aging · Arus kas · GL"
@@ -445,7 +446,7 @@ export function ReportsClient() {
           },
         ]}
       />
-    </div>
+    </ListPageShell>
   );
 }
 

@@ -6,6 +6,7 @@ import {
   Badge,
   Button,
   Card,
+  ListPageShell,
   PageHeader,
   Table,
 } from "@/components/ui";
@@ -54,7 +55,7 @@ export function JournalDetailClient({ id }: { id: string }) {
   const j = query.data?.journal;
 
   return (
-    <div className="space-y-6">
+    <ListPageShell>
       <PageHeader
         title={j ? `Jurnal ${j.number}` : "Detail jurnal"}
         description="Baris · cost center · reverse"
@@ -69,6 +70,7 @@ export function JournalDetailClient({ id }: { id: string }) {
         isError={query.isError}
         error={query.error}
         onRetry={() => void query.refetch()}
+        loadingLabel="Memuat detail jurnal..."
       >
         {j ? (
           <>
@@ -191,6 +193,6 @@ export function JournalDetailClient({ id }: { id: string }) {
           </>
         ) : null}
       </QueryBoundary>
-    </div>
+    </ListPageShell>
   );
 }
