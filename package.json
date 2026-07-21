@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@gsap/react": "^2.1.2",
     "@heroui/react": "^3.2.2",
     "@heroui/styles": "^3.2.2",
     "@kinde-oss/kinde-auth-nextjs": "^2.13.0",
@@ -35,6 +36,8 @@
     "date-fns": "^4.4.0",
     "decimal.js": "^10.6.0",
     "dotenv": "^17.4.2",
+    "framer-motion": "^12.42.2",
+    "gsap": "^3.15.0",
     "lucide-react": "^1.24.0",
     "next": "16.2.10",
     "pdf-lib": "^1.17.1",

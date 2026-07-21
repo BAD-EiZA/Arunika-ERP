@@ -28,6 +28,7 @@ import {
   Tabs,
   TextArea as HeroTextArea,
 } from "@heroui/react";
+import { Inbox, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export function PageHeader({
@@ -42,7 +43,7 @@ export function PageHeader({
   crumbs?: Array<{ label: string; href?: string }>;
 }) {
   return (
-    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div className="mb-7 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0 space-y-2">
         {crumbs && crumbs.length > 0 ? (
           <Breadcrumbs className="text-xs">
@@ -53,14 +54,18 @@ export function PageHeader({
             ))}
           </Breadcrumbs>
         ) : null}
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground md:text-[1.7rem]">
+        <h1 className="text-2xl font-semibold tracking-tight text-[#0F4C75] md:text-[1.75rem]">
           {title}
         </h1>
         {description ? (
-          <p className="mt-1 max-w-2xl text-sm text-muted">{description}</p>
+          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted">
+            {description}
+          </p>
         ) : null}
       </div>
-      {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
+      {actions ? (
+        <div className="flex flex-wrap gap-2 shrink-0">{actions}</div>
+      ) : null}
     </div>
   );
 }
@@ -75,10 +80,18 @@ export function Card({
   title?: string;
 }) {
   return (
-    <HeroCard className={cn("w-full", className)} variant="default">
+    <HeroCard
+      className={cn(
+        "w-full rounded-2xl border border-border/80 shadow-[0_2px_8px_rgba(15,76,117,0.04)]",
+        className,
+      )}
+      variant="default"
+    >
       {title ? (
         <HeroCard.Header>
-          <HeroCard.Title className="text-sm font-semibold">{title}</HeroCard.Title>
+          <HeroCard.Title className="text-sm font-semibold text-[#0F4C75]">
+            {title}
+          </HeroCard.Title>
         </HeroCard.Header>
       ) : null}
       <HeroCard.Content className={title ? undefined : "pt-4"}>
@@ -333,10 +346,55 @@ export function Form({
   );
 }
 
-export function EmptyState({ message }: { message: string }) {
+export function EmptyState({
+  message,
+  title,
+  description,
+  icon: Icon = Inbox,
+  action,
+  className,
+  compact,
+}: {
+  /** @deprecated prefer title + description; still works as body text */
+  message?: string;
+  title?: string;
+  description?: string;
+  icon?: LucideIcon;
+  action?: ReactNode;
+  className?: string;
+  compact?: boolean;
+}) {
+  const heading = title ?? (description || action ? "Belum ada data" : undefined);
+  const body = description ?? message ?? "Tidak ada data";
+
   return (
-    <div className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-muted">
-      {message}
+    <div
+      className={cn(
+        "flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#0F4C75]/15 bg-[color-mix(in_srgb,#BBE1FA_12%,white)] text-center",
+        compact ? "px-4 py-8" : "px-6 py-12",
+        className,
+      )}
+    >
+      <div
+        className={cn(
+          "mb-3 flex items-center justify-center rounded-2xl bg-white text-[#0F4C75] shadow-sm ring-1 ring-[#0F4C75]/10",
+          compact ? "size-10" : "size-12",
+        )}
+      >
+        <Icon className={compact ? "size-5" : "size-6"} strokeWidth={1.75} />
+      </div>
+      {heading ? (
+        <p className="text-sm font-semibold text-[#0F4C75]">{heading}</p>
+      ) : null}
+      <p
+        className={cn(
+          "max-w-sm text-sm leading-relaxed text-muted",
+          heading ? "mt-1" : null,
+        )}
+      >
+        {body}
+      </p>
+      {action ? <div className="mt-4">{action}</div> : null}
     </div>
   );
 }
@@ -344,18 +402,70 @@ export function EmptyState({ message }: { message: string }) {
 export function StatCard({
   label,
   value,
+  hint,
+  icon: Icon,
+  className,
 }: {
   label: string;
   value: string | number;
+  hint?: string;
+  icon?: LucideIcon;
+  className?: string;
 }) {
   return (
-    <div className="rounded-xl border border-border/80 bg-surface/90 p-4 shadow-sm">
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">
-        {label}
-      </p>
-      <p className="mt-2 bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-2xl font-semibold tracking-tight text-transparent">
+    <div
+      className={cn(
+        "relative overflow-hidden rounded-2xl border border-border/70 bg-surface/95 p-4 shadow-[0_2px_8px_rgba(15,76,117,0.05)]",
+        className,
+      )}
+    >
+      <div className="pointer-events-none absolute -right-4 -top-4 size-16 rounded-full bg-[#BBE1FA]/25 blur-2xl" />
+      <div className="relative flex items-start justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+          {label}
+        </p>
+        {Icon ? (
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-[#E8F4FC] text-[#0F4C75]">
+            <Icon className="size-4" />
+          </div>
+        ) : null}
+      </div>
+      <p className="relative mt-2 text-2xl font-semibold tracking-tight text-[#0F4C75] tabular-nums">
         {value}
       </p>
+      {hint ? (
+        <p className="relative mt-1 text-xs text-muted">{hint}</p>
+      ) : null}
+    </div>
+  );
+}
+
+/** Shared vertical rhythm for list/form module pages */
+export function ListPageShell({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("space-y-5 md:space-y-6", className)}>{children}</div>
+  );
+}
+
+export function SectionLabel({
+  children,
+  action,
+}: {
+  children: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="mb-3 flex items-center justify-between gap-3">
+      <h2 className="text-sm font-semibold tracking-tight text-[#0F4C75]">
+        {children}
+      </h2>
+      {action}
     </div>
   );
 }
@@ -528,16 +638,43 @@ export function UserAvatar({
   );
 }
 
-export function LoadingBlock({ label = "Memuat..." }: { label?: string }) {
+export function LoadingBlock({
+  label = "Memuat...",
+  rows = 4,
+}: {
+  label?: string;
+  rows?: number;
+}) {
   return (
-    <div className="space-y-3 py-4">
+    <div className="space-y-4 py-2">
       <div className="flex items-center gap-3 text-sm text-muted">
         <Spinner size="sm" color="accent" />
         <span>{label}</span>
       </div>
-      <Skeleton className="h-3 w-2/3 rounded-md" />
-      <Skeleton className="h-3 w-full rounded-md" />
-      <Skeleton className="h-3 w-5/6 rounded-md" />
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: Math.min(rows, 4) }, (_, i) => (
+          <div
+            key={i}
+            className="rounded-2xl border border-border/60 bg-surface/80 p-4"
+          >
+            <Skeleton className="h-3 w-1/3 rounded-md" />
+            <Skeleton className="mt-3 h-7 w-1/2 rounded-md" />
+          </div>
+        ))}
+      </div>
+      <div className="overflow-hidden rounded-2xl border border-border/60">
+        <Skeleton className="h-10 w-full rounded-none" />
+        {Array.from({ length: rows }, (_, i) => (
+          <div
+            key={i}
+            className="flex gap-3 border-t border-border/50 px-4 py-3"
+          >
+            <Skeleton className="h-3 w-1/4 rounded-md" />
+            <Skeleton className="h-3 w-1/5 rounded-md" />
+            <Skeleton className="h-3 flex-1 rounded-md" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

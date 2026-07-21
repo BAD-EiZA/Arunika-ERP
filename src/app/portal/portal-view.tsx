@@ -44,22 +44,34 @@ export function PortalView({ token }: { token: string }) {
 
   if (!token) {
     return (
-      <div className="mx-auto max-w-3xl p-6">
-        <EmptyState message="Token portal wajib di URL: /portal?token=..." />
+      <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_rgba(50,130,184,0.14),_transparent_55%),#f5fafd]">
+        <div className="mx-auto max-w-3xl p-6 md:p-10">
+          <EmptyState message="Token portal wajib di URL: /portal?token=..." />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-6">
-      <PageHeader
-        title="Portal mitra"
-        description={
-          query.data
-            ? `${query.data.company.name} · ${query.data.portalType}`
-            : "Memuat portal..."
-        }
-      />
+    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_rgba(50,130,184,0.14),_transparent_55%),#f5fafd]">
+      <div className="mx-auto max-w-4xl space-y-6 p-6 md:p-10">
+        <div className="flex items-center gap-3">
+          <div className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-[#0F4C75] to-[#3282B8] text-sm font-bold text-white">
+            A
+          </div>
+          <div>
+            <div className="text-sm font-bold text-[#0F4C75]">Arunika ERP</div>
+            <div className="text-xs text-muted">Portal mitra</div>
+          </div>
+        </div>
+        <PageHeader
+          title="Portal mitra"
+          description={
+            query.data
+              ? `${query.data.company.name} · ${query.data.portalType}`
+              : "Memuat portal..."
+          }
+        />
       <QueryBoundary
         isLoading={query.isLoading}
         isError={query.isError}
@@ -110,6 +122,7 @@ export function PortalView({ token }: { token: string }) {
           </>
         ) : null}
       </QueryBoundary>
+      </div>
     </div>
   );
 }

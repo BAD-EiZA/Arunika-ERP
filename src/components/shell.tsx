@@ -202,11 +202,11 @@ function NavLink({
       title={item.label}
       onClick={onNavigate}
       className={cn(
-        "group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors",
+        "group flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm transition-colors duration-200",
         collapsed && "justify-center px-2",
         active
-          ? "bg-accent text-accent-foreground shadow-sm"
-          : "text-foreground/75 hover:bg-accent/10 hover:text-foreground",
+          ? "bg-[#0F4C75] text-white shadow-sm"
+          : "text-foreground/75 hover:bg-[#0F4C75]/08 hover:text-[#0F4C75]",
       )}
     >
       {Icon ? (
@@ -367,15 +367,15 @@ function SidebarNav({
 function Brand({ collapsed }: { collapsed?: boolean }) {
   return (
     <div className={cn("flex items-center gap-2.5", collapsed && "justify-center")}>
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#1B262C] to-[#3282B8] text-sm font-bold text-[#BBE1FA] shadow-sm">
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#0F4C75] to-[#3282B8] text-sm font-bold text-white shadow-sm">
         A
       </div>
       {!collapsed ? (
         <div className="min-w-0">
-          <div className="truncate text-sm font-bold tracking-tight text-foreground">
+          <div className="truncate text-sm font-bold tracking-tight text-[#0F4C75]">
             Arunika ERP
           </div>
-          <div className="truncate text-[11px] text-muted">Modular operations</div>
+          <div className="truncate text-[11px] text-muted">Operasi terpadu</div>
         </div>
       ) : null}
     </div>
@@ -413,12 +413,12 @@ export function AppShell({
       ?.label ?? "ERP";
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_rgba(50,130,184,0.18),_transparent_55%),linear-gradient(180deg,#f5fafd_0%,#e8f4fc_45%,#f5fafd_100%)] text-foreground">
+    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_rgba(50,130,184,0.14),_transparent_55%),linear-gradient(180deg,#f5fafd_0%,#eef6fb_50%,#f5fafd_100%)] text-foreground">
       <div className="mx-auto flex min-h-screen max-w-[1700px]">
         {/* Desktop sidebar */}
         <aside
           className={cn(
-            "sticky top-0 hidden h-screen shrink-0 flex-col overflow-x-hidden border-r border-border/80 bg-surface/90 backdrop-blur-md transition-[width] duration-200 lg:flex",
+            "sticky top-0 hidden h-screen shrink-0 flex-col overflow-x-hidden border-r border-border/70 bg-surface/95 shadow-[4px_0_24px_rgba(15,76,117,0.03)] backdrop-blur-md transition-[width] duration-200 lg:flex",
             collapsed ? "w-[72px]" : "w-[280px]",
           )}
         >
@@ -489,7 +489,7 @@ export function AppShell({
 
         {/* Main */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-20 border-b border-border/80 bg-surface/85 px-3 py-3 backdrop-blur-md md:px-5">
+          <header className="sticky top-0 z-20 border-b border-border/70 bg-surface/90 px-3 py-3 shadow-[0_1px_0_rgba(15,76,117,0.04)] backdrop-blur-xl md:px-5">
             <div className="flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2">
                 {/* Mobile menu */}
@@ -629,7 +629,9 @@ export function AppShell({
             </div>
           </header>
 
-          <main className="flex-1 p-4 md:p-6 lg:p-8">{children}</main>
+          <main className="flex-1 p-4 md:p-6 lg:p-8">
+            <div className="mx-auto w-full max-w-[1400px]">{children}</div>
+          </main>
         </div>
       </div>
     </div>

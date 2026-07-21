@@ -15,7 +15,12 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Arunika ERP",
-  description: "ERP SaaS untuk dagang, distribusi, manufaktur, keuangan, HR, dan project",
+  description:
+    "ERP SaaS untuk dagang, distribusi, manufaktur, keuangan, HR, dan project",
+  icons: {
+    icon: [{ url: "/icon", type: "image/png" }],
+    apple: [{ url: "/apple-icon", type: "image/png" }],
+  },
 };
 
 export default function RootLayout({

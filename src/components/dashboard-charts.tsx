@@ -1,14 +1,36 @@
 "use client";
 
 import { formatIdr } from "@/lib/money";
+import { cn } from "@/lib/cn";
 
-const PALETTE = ["#1B262C", "#0F4C75", "#3282B8", "#BBE1FA", "#1a6a9a", "#5a9fc9", "#0a3a5c"];
+const PALETTE = [
+  "#0F4C75",
+  "#3282B8",
+  "#1B262C",
+  "#5a9fc9",
+  "#BBE1FA",
+  "#1a6a9a",
+  "#0a3a5c",
+];
 
 type Point = { label: string; value: number };
 
 function shortMonth(ym: string) {
   const [, m] = ym.split("-");
-  const names = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+  const names = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "Mei",
+    "Jun",
+    "Jul",
+    "Agu",
+    "Sep",
+    "Okt",
+    "Nov",
+    "Des",
+  ];
   return names[Number(m) - 1] ?? ym;
 }
 
@@ -37,7 +59,7 @@ export function GroupedBarChart({
 
   return (
     <div>
-      <div className="mb-2 flex flex-wrap gap-3 text-[11px] text-muted">
+      <div className="mb-3 flex flex-wrap gap-4 text-[11px] font-medium text-muted">
         <span className="inline-flex items-center gap-1.5">
           <span className="size-2.5 rounded-sm bg-[#0F4C75]" />
           {aLabel}
@@ -47,7 +69,12 @@ export function GroupedBarChart({
           {bLabel}
         </span>
       </div>
-      <svg viewBox={`0 0 ${w} ${h}`} className="h-48 w-full" role="img" aria-label="Bar chart">
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        className="h-48 w-full"
+        role="img"
+        aria-label="Bar chart"
+      >
         {[0.25, 0.5, 0.75, 1].map((t) => {
           const y = padT + chartH * (1 - t);
           return (
@@ -58,7 +85,7 @@ export function GroupedBarChart({
               y1={y}
               y2={y}
               stroke="currentColor"
-              className="text-border"
+              className="text-border/80"
               strokeWidth={1}
               strokeDasharray="3 4"
             />
@@ -75,7 +102,7 @@ export function GroupedBarChart({
                 y={padT + chartH - ha}
                 width={barW}
                 height={Math.max(ha, 1)}
-                rx={3}
+                rx={4}
                 fill="#0F4C75"
               >
                 <title>{`${aLabel} ${label}: ${formatIdr(seriesA[i])}`}</title>
@@ -85,7 +112,7 @@ export function GroupedBarChart({
                 y={padT + chartH - hb}
                 width={barW}
                 height={Math.max(hb, 1)}
-                rx={3}
+                rx={4}
                 fill="#3282B8"
               >
                 <title>{`${bLabel} ${label}: ${formatIdr(seriesB[i])}`}</title>
@@ -122,47 +149,62 @@ export function DonutChart({
   const cy = 70;
   const stroke = 18;
   const c = 2 * Math.PI * r;
-  let offset = 0;
+
+  const segments = items.reduce<
+    Array<{ label: string; value: number; len: number; offset: number; color: string }>
+  >((acc, item, i) => {
+    const len = (item.value / total) * c;
+    const prev = acc[acc.length - 1];
+    const offset = prev ? prev.offset + prev.len : 0;
+    acc.push({
+      label: item.label,
+      value: item.value,
+      len,
+      offset,
+      color: PALETTE[i % PALETTE.length],
+    });
+    return acc;
+  }, []);
 
   return (
-    <div className="flex flex-col items-center gap-3 sm:flex-row sm:items-center">
-      <svg viewBox="0 0 140 140" className="size-36 shrink-0" role="img" aria-label="Donut chart">
+    <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-center">
+      <svg
+        viewBox="0 0 140 140"
+        className="size-36 shrink-0"
+        role="img"
+        aria-label="Donut chart"
+      >
         <circle
           cx={cx}
           cy={cy}
           r={r}
           fill="none"
           stroke="currentColor"
-          className="text-border/60"
+          className="text-border/50"
           strokeWidth={stroke}
         />
-        {items.map((item, i) => {
-          const len = (item.value / total) * c;
-          const el = (
-            <circle
-              key={item.label}
-              cx={cx}
-              cy={cy}
-              r={r}
-              fill="none"
-              stroke={PALETTE[i % PALETTE.length]}
-              strokeWidth={stroke}
-              strokeDasharray={`${len} ${c - len}`}
-              strokeDashoffset={-offset}
-              strokeLinecap="butt"
-              transform={`rotate(-90 ${cx} ${cy})`}
-            >
-              <title>{`${item.label}: ${item.value}`}</title>
-            </circle>
-          );
-          offset += len;
-          return el;
-        })}
+        {segments.map((seg) => (
+          <circle
+            key={seg.label}
+            cx={cx}
+            cy={cy}
+            r={r}
+            fill="none"
+            stroke={seg.color}
+            strokeWidth={stroke}
+            strokeDasharray={`${seg.len} ${c - seg.len}`}
+            strokeDashoffset={-seg.offset}
+            strokeLinecap="butt"
+            transform={`rotate(-90 ${cx} ${cy})`}
+          >
+            <title>{`${seg.label}: ${seg.value}`}</title>
+          </circle>
+        ))}
         <text
           x={cx}
           y={centerLabel ? cy - 4 : cy + 4}
           textAnchor="middle"
-          className="fill-foreground"
+          className="fill-[#0F4C75]"
           fontSize={13}
           fontWeight={700}
         >
@@ -180,18 +222,21 @@ export function DonutChart({
           </text>
         ) : null}
       </svg>
-      <ul className="w-full space-y-1.5 text-xs">
-        {items.map((item, i) => (
-          <li key={item.label} className="flex items-center justify-between gap-2">
+      <ul className="w-full space-y-2 text-xs">
+        {segments.map((seg) => (
+          <li
+            key={seg.label}
+            className="flex items-center justify-between gap-2 rounded-lg bg-[#f7fafc] px-2.5 py-1.5"
+          >
             <span className="flex min-w-0 items-center gap-1.5">
               <span
                 className="size-2.5 shrink-0 rounded-full"
-                style={{ background: PALETTE[i % PALETTE.length] }}
+                style={{ background: seg.color }}
               />
-              <span className="truncate text-muted">{item.label}</span>
+              <span className="truncate text-muted">{seg.label}</span>
             </span>
-            <span className="font-medium tabular-nums text-foreground">
-              {item.value}
+            <span className="font-semibold tabular-nums text-[#0F4C75]">
+              {seg.value}
             </span>
           </li>
         ))}
@@ -209,26 +254,28 @@ export function HorizontalBarChart({
 }) {
   const max = Math.max(1, ...items.map((i) => i.value));
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-3">
       {items.length === 0 ? (
         <p className="text-sm text-muted">Belum ada data</p>
       ) : (
         items.map((item, i) => (
           <div key={item.label}>
-            <div className="mb-1 flex items-center justify-between gap-2 text-xs">
+            <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
               <span className="truncate font-medium text-foreground">
                 {item.label}
                 {item.sub ? (
-                  <span className="ml-1 font-normal text-muted">· {item.sub}</span>
+                  <span className="ml-1 font-normal text-muted">
+                    · {item.sub}
+                  </span>
                 ) : null}
               </span>
-              <span className="shrink-0 tabular-nums text-muted">
+              <span className="shrink-0 tabular-nums font-medium text-[#0F4C75]">
                 {format === "idr" ? formatIdr(item.value) : item.value}
               </span>
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-border/50">
+            <div className="h-2.5 overflow-hidden rounded-full bg-[#E8F4FC]">
               <div
-                className="h-full rounded-full transition-all"
+                className={cn("h-full rounded-full transition-all duration-500")}
                 style={{
                   width: `${Math.max(2, (item.value / max) * 100)}%`,
                   background: `linear-gradient(90deg, ${PALETTE[i % PALETTE.length]}, #3282B8)`,
@@ -242,22 +289,18 @@ export function HorizontalBarChart({
   );
 }
 
-export function ArApCompare({
-  ar,
-  ap,
-}: {
-  ar: number;
-  ap: number;
-}) {
+export function ArApCompare({ ar, ap }: { ar: number; ap: number }) {
   const max = Math.max(1, ar, ap);
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div>
-        <div className="mb-1 flex justify-between text-xs">
-          <span className="font-medium text-[#0F4C75]">Piutang (AR)</span>
-          <span className="tabular-nums text-muted">{formatIdr(ar)}</span>
+        <div className="mb-1.5 flex justify-between text-xs">
+          <span className="font-semibold text-[#0F4C75]">Piutang (AR)</span>
+          <span className="tabular-nums font-medium text-muted">
+            {formatIdr(ar)}
+          </span>
         </div>
-        <div className="h-3 overflow-hidden rounded-full bg-border/50">
+        <div className="h-3.5 overflow-hidden rounded-full bg-[#E8F4FC]">
           <div
             className="h-full rounded-full bg-gradient-to-r from-[#1B262C] to-[#0F4C75]"
             style={{ width: `${(ar / max) * 100}%` }}
@@ -265,23 +308,25 @@ export function ArApCompare({
         </div>
       </div>
       <div>
-        <div className="mb-1 flex justify-between text-xs">
-          <span className="font-medium text-[#3282B8]">Utang (AP)</span>
-          <span className="tabular-nums text-muted">{formatIdr(ap)}</span>
+        <div className="mb-1.5 flex justify-between text-xs">
+          <span className="font-semibold text-[#3282B8]">Utang (AP)</span>
+          <span className="tabular-nums font-medium text-muted">
+            {formatIdr(ap)}
+          </span>
         </div>
-        <div className="h-3 overflow-hidden rounded-full bg-border/50">
+        <div className="h-3.5 overflow-hidden rounded-full bg-[#E8F4FC]">
           <div
-            className="h-full rounded-full bg-gradient-to-r from-[#3282B8] to-[#BBE1FA]"
+            className="h-full rounded-full bg-gradient-to-r from-[#3282B8] to-[#7eb8d9]"
             style={{ width: `${(ap / max) * 100}%` }}
           />
         </div>
       </div>
-      <div className="rounded-lg bg-accent/5 px-3 py-2 text-xs text-muted">
-        Net:{" "}
-        <span className="font-semibold text-foreground">
+      <div className="rounded-xl border border-[#0F4C75]/10 bg-[#E8F4FC]/60 px-3.5 py-2.5 text-xs text-muted">
+        Net{" "}
+        <span className="font-semibold text-[#0F4C75]">
           {formatIdr(ar - ap)}
         </span>{" "}
-        (AR − AP)
+        <span className="text-muted/80">(AR − AP)</span>
       </div>
     </div>
   );

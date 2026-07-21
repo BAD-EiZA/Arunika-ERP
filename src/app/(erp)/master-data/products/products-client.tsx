@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Badge,
   Button,
@@ -9,9 +9,11 @@ import {
   Field,
   FormGrid,
   Input,
+  ListPageShell,
   PageHeader,
   PaginationBar,
   Select,
+  StatCard,
   Table,
 } from "@/components/ui";
 import { MutationError, QueryBoundary } from "@/components/query-state";
@@ -20,35 +22,79 @@ import {
   useCreateProductMutation,
   useProductsQuery,
 } from "@/hooks/use-erp-queries";
-import {
-  AppComboBox,
-  AppDropdown,
-  AppNumberField,
-  toast,
-} from "@/components/heroui-kit";
-// HeroUI: ComboBox, Dropdown, NumberField, toast
+import { AppDropdown, toast } from "@/components/heroui-kit";
 import { formToObject } from "@/lib/api-client";
 import { formatIdr } from "@/lib/money";
+import { cn } from "@/lib/cn";
+import { FolderTree, Package, Plus, Search, Tags } from "lucide-react";
 
 const PAGE_SIZE = 20;
 
+type FormMode = "none" | "product" | "category";
+
 export function ProductsClient() {
   const [page, setPage] = useState(1);
+  const [formMode, setFormMode] = useState<FormMode>("none");
+  const [search, setSearch] = useState("");
   const query = useProductsQuery(page, PAGE_SIZE);
   const createProduct = useCreateProductMutation();
   const createCategory = useCreateCategoryMutation();
   const data = query.data;
 
+  const pageStats = useMemo(() => {
+    const list = data?.products ?? [];
+    return {
+      archived: list.filter((p) => p.isArchived).length,
+      active: list.filter((p) => !p.isArchived).length,
+    };
+  }, [data?.products]);
+
+  const visible = useMemo(() => {
+    const list = data?.products ?? [];
+    const q = search.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(
+      (p) =>
+        p.sku.toLowerCase().includes(q) ||
+        p.name.toLowerCase().includes(q) ||
+        (p.category?.name ?? "").toLowerCase().includes(q),
+    );
+  }, [data?.products, search]);
+
   return (
-    <div className="space-y-6">
+    <ListPageShell>
       <PageHeader
         title="Produk"
-        description="Master produk via TanStack Query"
+        description="SKU, harga, kategori, dan status inventori"
         crumbs={[
           { label: "ERP", href: "/dashboard" },
           { label: "Master", href: "/master-data/products" },
           { label: "Produk" },
         ]}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant={formMode === "category" ? "primary" : "secondary"}
+              onClick={() =>
+                setFormMode((m) => (m === "category" ? "none" : "category"))
+              }
+            >
+              <Tags className="mr-1.5 size-4" />
+              {formMode === "category" ? "Tutup" : "Kategori"}
+            </Button>
+            <Button
+              type="button"
+              variant={formMode === "product" ? "secondary" : "primary"}
+              onClick={() =>
+                setFormMode((m) => (m === "product" ? "none" : "product"))
+              }
+            >
+              <Plus className="mr-1.5 size-4" />
+              {formMode === "product" ? "Tutup form" : "Tambah produk"}
+            </Button>
+          </div>
+        }
       />
 
       <QueryBoundary
@@ -56,10 +102,34 @@ export function ProductsClient() {
         isError={query.isError}
         error={query.error}
         onRetry={() => void query.refetch()}
+        loadingLabel="Memuat produk..."
       >
         {data ? (
           <>
-            <div className="grid gap-4 xl:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard
+                label="Total produk"
+                value={data.total}
+                icon={Package}
+              />
+              <StatCard
+                label="Kategori"
+                value={data.categories.length}
+                icon={FolderTree}
+              />
+              <StatCard
+                label="Aktif (halaman)"
+                value={pageStats.active}
+                hint="Di halaman ini"
+              />
+              <StatCard
+                label="Arsip (halaman)"
+                value={pageStats.archived}
+                hint="Di halaman ini"
+              />
+            </div>
+
+            {formMode === "product" ? (
               <Card title="Tambah produk">
                 <form
                   className="space-y-3"
@@ -70,6 +140,7 @@ export function ProductsClient() {
                       onSuccess: () => {
                         e.currentTarget.reset();
                         setPage(1);
+                        setFormMode("none");
                         toast.success("Produk disimpan");
                       },
                     });
@@ -134,12 +205,28 @@ export function ProductsClient() {
                     </Field>
                   </FormGrid>
                   <MutationError error={createProduct.error} />
-                  <Button type="submit" disabled={createProduct.isPending}>
-                    {createProduct.isPending ? "Menyimpan..." : "Simpan produk"}
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="submit"
+                      disabled={createProduct.isPending}
+                    >
+                      {createProduct.isPending
+                        ? "Menyimpan..."
+                        : "Simpan produk"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setFormMode("none")}
+                    >
+                      Batal
+                    </Button>
+                  </div>
                 </form>
               </Card>
+            ) : null}
 
+            {formMode === "category" ? (
               <Card title="Tambah kategori">
                 <form
                   className="space-y-3"
@@ -147,7 +234,11 @@ export function ProductsClient() {
                     e.preventDefault();
                     const body = formToObject(e.currentTarget);
                     createCategory.mutate(body, {
-                      onSuccess: () => e.currentTarget.reset(),
+                      onSuccess: () => {
+                        e.currentTarget.reset();
+                        setFormMode("none");
+                        toast.success("Kategori disimpan");
+                      },
                     });
                   }}
                 >
@@ -160,53 +251,106 @@ export function ProductsClient() {
                     </Field>
                   </FormGrid>
                   <MutationError error={createCategory.error} />
-                  <Button
-                    type="submit"
-                    variant="secondary"
-                    disabled={createCategory.isPending}
-                  >
-                    {createCategory.isPending
-                      ? "Menyimpan..."
-                      : "Simpan kategori"}
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="submit"
+                      variant="secondary"
+                      disabled={createCategory.isPending}
+                    >
+                      {createCategory.isPending
+                        ? "Menyimpan..."
+                        : "Simpan kategori"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setFormMode("none")}
+                    >
+                      Batal
+                    </Button>
+                  </div>
                 </form>
               </Card>
-            </div>
+            ) : null}
 
-            <Card title="Cari cepat (ComboBox)">
-              <AppComboBox
-                label="Produk di halaman ini"
-                items={data.products.map((p) => ({
-                  id: p.id,
-                  label: `${p.sku} — ${p.name}`,
-                }))}
-                onSelectionChange={(id) => {
-                  const p = data.products.find((x) => x.id === id);
-                  if (p) toast.info(`Dipilih: ${p.sku}`);
-                }}
-              />
-              <div className="mt-3">
-                <AppNumberField label="Contoh qty (NumberField)" defaultValue={1} min={0} />
+            <Card
+              title={`Daftar produk (${
+                search ? `${visible.length} cocok` : data.total
+              })`}
+            >
+              <div className="relative mb-4 max-w-sm">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted" />
+                <Input
+                  className="pl-8"
+                  placeholder="Cari SKU / nama di halaman ini..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
               </div>
-            </Card>
 
-            <Card title={`Daftar produk (${data.total})`}>
-              {data.products.length === 0 ? (
-                <EmptyState message="Belum ada produk" />
+              {visible.length === 0 ? (
+                <EmptyState
+                  compact
+                  icon={Package}
+                  title={
+                    data.products.length === 0
+                      ? "Belum ada produk"
+                      : "Tidak cocok di halaman ini"
+                  }
+                  message={
+                    data.products.length === 0
+                      ? "Tambah produk STOCK untuk stok, SO, dan POS."
+                      : "Ubah kata kunci atau ganti halaman."
+                  }
+                  action={
+                    data.products.length === 0 ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => setFormMode("product")}
+                      >
+                        <Plus className="mr-1.5 size-4" />
+                        Tambah produk
+                      </Button>
+                    ) : undefined
+                  }
+                />
               ) : (
                 <>
                   <Table
-                    headers={["SKU", "Nama", "Satuan", "Beli", "Jual", "Status", "Aksi"]}
+                    headers={[
+                      "SKU",
+                      "Nama",
+                      "Satuan",
+                      "Beli",
+                      "Jual",
+                      "Status",
+                      "Aksi",
+                    ]}
                   >
-                    {data.products.map((p) => (
-                      <tr key={p.id}>
-                        <td className="px-3 py-2 font-medium">{p.sku}</td>
-                        <td className="px-3 py-2">{p.name}</td>
-                        <td className="px-3 py-2">{p.unit.symbol}</td>
+                    {visible.map((p) => (
+                      <tr
+                        key={p.id}
+                        className={cn(p.isArchived && "opacity-60")}
+                      >
+                        <td className="px-3 py-2 font-medium text-[#0F4C75]">
+                          {p.sku}
+                        </td>
                         <td className="px-3 py-2">
+                          <div>{p.name}</div>
+                          {p.category?.name ? (
+                            <div className="text-[11px] text-muted">
+                              {p.category.name}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-2">{p.unit.symbol}</td>
+                        <td className="px-3 py-2 tabular-nums">
                           {formatIdr(p.purchasePrice)}
                         </td>
-                        <td className="px-3 py-2">{formatIdr(p.salePrice)}</td>
+                        <td className="px-3 py-2 font-semibold tabular-nums text-[#0F4C75]">
+                          {formatIdr(p.salePrice)}
+                        </td>
                         <td className="px-3 py-2">
                           <Badge tone={p.isArchived ? "danger" : "success"}>
                             {p.isArchived ? "Arsip" : p.type}
@@ -216,7 +360,7 @@ export function ProductsClient() {
                           <AppDropdown
                             label={
                               <Button type="button" variant="ghost">
-                                ⋯
+                                ···
                               </Button>
                             }
                             items={[
@@ -239,20 +383,27 @@ export function ProductsClient() {
                       </tr>
                     ))}
                   </Table>
-                  <PaginationBar
-                    page={data.page}
-                    totalPages={data.totalPages}
-                    total={data.total}
-                    limit={data.limit}
-                    disabled={query.isFetching}
-                    onPageChange={setPage}
-                  />
+                  {!search ? (
+                    <PaginationBar
+                      page={data.page}
+                      totalPages={data.totalPages}
+                      total={data.total}
+                      limit={data.limit}
+                      disabled={query.isFetching}
+                      onPageChange={setPage}
+                    />
+                  ) : (
+                    <p className="mt-3 text-xs text-muted">
+                      Filter hanya di halaman ini — hapus pencarian untuk
+                      paginasi penuh.
+                    </p>
+                  )}
                 </>
               )}
             </Card>
           </>
         ) : null}
       </QueryBoundary>
-    </div>
+    </ListPageShell>
   );
 }
