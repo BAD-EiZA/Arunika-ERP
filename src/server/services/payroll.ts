@@ -18,6 +18,7 @@ const ptkp: Record<string, [string, number]> = {
   "TK/2": ["B",63000000], "TK/3": ["B",67500000], "K/1": ["B",63000000],
   "K/2": ["B",67500000], "K/3": ["C",72000000],
 };
+const validIsoDay = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && Number.isFinite(new Date(s).getTime()) && new Date(s).toISOString().slice(0, 10) === s;
 const D = (v: string) => new Decimal(v);
 const rupiah = (v: Decimal) => v.toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
 const fixed = (v: Decimal) => v.toFixed(2);
@@ -35,6 +36,11 @@ const bpjsRule = z.object({
 }).refine(r => !r.cap || !r.floor || D(r.cap).gte(D(r.floor)), "cap >= floor");
 function validateTaxConfig(policy: unknown) {
   const parsed = taxConfig.parse(policy);
+  if (parsed.validThrough && !validIsoDay(parsed.validThrough)) throw validationError("Tanggal akhir kebijakan tidak valid");
+  for (const rule of Object.values(parsed.bpjs)) {
+    const dates = rule.ceilings?.map(c => c.from) ?? [];
+    if (dates.some(d => !validIsoDay(d)) || new Set(dates).size !== dates.length) throw validationError("Tanggal ceiling tidak valid atau duplikat");
+  }
   for (const [table, [limits, rates]] of Object.entries(parsed.pph21.terTables)) {
     if (!Array.isArray(limits) || !Array.isArray(rates) || limits.length + 1 !== rates.length || limits.length === 0) throw validationError(`Tabel TER ${table} tidak valid`);
     for (let i = 0; i < limits.length; i++) {
@@ -64,6 +70,11 @@ function validateTaxConfig(policy: unknown) {
   return parsed;
 }
 const taxConfig = z.object({
+  validThrough: z.string().optional(),
+  sources: z.array(z.object({ url: z.url(), checkedAt: z.string() })).optional(),
+  employmentTypes: z.array(z.enum(["PERMANENT", "CONTRACT", "DAILY"])).optional(),
+  proration: z.enum(["CALENDAR_DAYS"]).optional(),
+  residentPartialYear: z.boolean().optional(),
   pph21: z.object({
     terTables: z.record(z.string(), z.tuple([z.array(z.number()), z.array(z.number())])),
     ptkp: z.record(z.string(), z.tuple([z.string(), z.number()])),
@@ -109,22 +120,25 @@ export function defaultPolicyConfig() {
 export function calculatePph21(input: {
   gross: string; pension: string; status: string; month: number;
   prior: { gross: string; pension: string; tax: string; month: number }[];
-  policy?: unknown;
+  policy?: unknown; firstMonth?: number; finalMonth?: number;
 }) {
   const policy = validateTaxConfig(input.policy ?? defaultPolicyConfig()).pph21;
   const profile = policy.ptkp[input.status];
   if (!profile || !Number.isInteger(input.month) || input.month < 1 || input.month > 12) throw validationError("Profil pajak atau riwayat PPh 21 tidak lengkap");
   const gross = D(input.gross), pension = D(input.pension);
   if (![gross,pension].every(v => v.isFinite() && v.gte(0) && v.decimalPlaces() <= 2) || pension.gt(gross)) throw validationError("Basis PPh 21 tidak valid");
-  if (input.prior.length !== input.month - 1) throw validationError("Riwayat Januari sampai bulan sebelumnya wajib lengkap");
+  const first = input.firstMonth ?? 1, final = input.finalMonth ?? 12;
+  if (!Number.isInteger(first) || !Number.isInteger(final) || first < 1 || final > 12 || first > input.month || final < input.month) throw validationError("Bulan awal/akhir pajak tidak valid");
+  if (input.prior.length !== input.month - first) throw validationError("Riwayat Januari sampai bulan sebelumnya wajib lengkap");
   // Full-year scope: exactly one posted entry per preceding calendar month.
   const seen = new Set<number>();
   for (const p of input.prior) {
-    if (!Number.isInteger(p.month) || p.month < 1 || p.month >= input.month || seen.has(p.month)) throw validationError("Riwayat PPh 21 tidak valid: bulan prior wajib unik dan sebelum bulan berjalan");
+    if (!Number.isInteger(p.month) || p.month < first || p.month >= input.month || seen.has(p.month)) throw validationError("Riwayat PPh 21 tidak valid: bulan prior wajib unik dan sebelum bulan berjalan");
     seen.add(p.month);
     if (![p.gross,p.pension,p.tax].every(s => D(s).isFinite() && D(s).gte(0))) throw validationError("Riwayat PPh 21 tidak valid");
   }
-  if (input.month !== 12) {
+  if (Array.from({length:input.month-first},(_,i)=>first+i).some(month=>!seen.has(month))) throw validationError("Riwayat PPh 21 tidak lengkap");
+  if (input.month !== final) {
     const [limits, rates] = policy.terTables[profile[0]];
     const idx = limits.findIndex(limit => gross.lte(limit));
     return { tax: fixed(rupiah(gross.mul(rates[idx < 0 ? rates.length - 1 : idx]).div(100))) };
@@ -145,8 +159,8 @@ export function calculatePph21(input: {
 
 export function calculateBpjs(input: { wage: string; program: string; riskClass?: string; effective: string; policy?: unknown }) {
   if (!input.policy) throw validationError("Kebijakan payroll berlaku wajib disediakan; tidak ada tarif implisit");
-  const date = new Date(input.effective);
-  if (!Number.isFinite(date.getTime()) || input.effective < SUPPORTED_WINDOW.from || input.effective > SUPPORTED_WINDOW.to) throw validationError(`Konfigurasi BPJS untuk tanggal ini belum tervalidasi (didukung: ${SUPPORTED_WINDOW.from} s.d. ${SUPPORTED_WINDOW.to})`);
+  const config = validateTaxConfig(input.policy);
+  if (!validIsoDay(input.effective) || input.effective < SUPPORTED_WINDOW.from || input.effective > (config.validThrough ?? SUPPORTED_WINDOW.to)) throw validationError("Konfigurasi BPJS untuk tanggal ini belum tervalidasi");
   const wage = D(input.wage);
   if (!wage.isFinite() || wage.lt(0) || wage.decimalPlaces() > 2) throw validationError("Upah BPJS tidak valid");
   const rules = validateTaxConfig(input.policy).bpjs;
@@ -156,7 +170,9 @@ export function calculateBpjs(input: { wage: string; program: string; riskClass?
   if (rule.ceilings?.length) {
     const applicable = [...rule.ceilings].sort((a,b) => a.from.localeCompare(b.from)).filter(c => c.from <= input.effective);
     if (!applicable.length) throw validationError(`Ceiling ${input.program} belum dikonfirmasi untuk tanggal berlaku`);
-    cap = applicable[applicable.length - 1].cap;
+    const latest = applicable[applicable.length - 1];
+    if (input.effective > SUPPORTED_WINDOW.to && latest.from.slice(0, 4) !== input.effective.slice(0, 4)) throw validationError("Ceiling tahun berlaku wajib dikonfirmasi");
+    cap = latest.cap;
   } else if (rule.cap == null && input.program === "JP") {
     throw validationError("Ceiling JP wajib dikonfirmasi manusia dalam kebijakan berlaku");
   }
@@ -171,9 +187,10 @@ const JKK_CLASSES = ["SANGAT_RENDAH","RENDAH","SEDANG","TINGGI","SANGAT_TINGGI"]
 export async function createPayrollPolicy(input: { companyId: string; userId: string; effectiveFrom: Date; config: unknown; notes?: string }) {
   if (!Number.isFinite(input.effectiveFrom.getTime())) throw validationError("Tanggal efektif kebijakan tidak valid");
   const parsed = validateTaxConfig(input.config);
+  if ((input.effectiveFrom.toISOString().slice(0,10) > SUPPORTED_WINDOW.to || (parsed.validThrough ?? "") > SUPPORTED_WINDOW.to) && (!parsed.validThrough || parsed.validThrough < input.effectiveFrom.toISOString().slice(0,10) || !parsed.sources?.length || parsed.sources.some(s => !validIsoDay(s.checkedAt)))) throw validationError("Tanggal akhir dan sumber kebijakan wajib untuk tahun tambahan");
   const jp = parsed.bpjs.JP;
   if (!jp?.ceilings?.length) throw validationError("Ceiling JP wajib diisi manual dengan sumber terverifikasi manusia (default tidak memuat angka yang belum dikonfirmasi)");
-  return prisma.payrollPolicy.create({ data: { companyId: input.companyId, effectiveFrom: input.effectiveFrom, config: parsed as Prisma.InputJsonValue, sourceUrls: RULE_SOURCES as unknown as Prisma.InputJsonValue, notes: input.notes, createdById: input.userId, status: "PENDING_APPROVAL" } });
+  return prisma.payrollPolicy.create({ data: { companyId: input.companyId, effectiveFrom: input.effectiveFrom, config: parsed as Prisma.InputJsonValue, sourceUrls: (parsed.sources ?? RULE_SOURCES) as unknown as Prisma.InputJsonValue, notes: input.notes, createdById: input.userId, status: "PENDING_APPROVAL" } });
 }
 export async function approvePayrollPolicy(companyId: string, id: string, approverUserId: string) {
   const policy = await prisma.payrollPolicy.findFirst({ where: { companyId, id, status: "PENDING_APPROVAL" } });
@@ -183,7 +200,11 @@ export async function approvePayrollPolicy(companyId: string, id: string, approv
   return prisma.payrollPolicy.update({ where: { id }, data: { status: "APPROVED" } });
 }
 export async function createPayrollProfile(input: { companyId: string; userId: string; employeeId: string; effectiveFrom: Date; employmentType: string; taxStatus: string; jkkRiskClass: string; fixedAllowance?: string; overtimeRate?: string; payrollUserId?: string }) {
-  if (input.employmentType !== "PERMANENT") throw validationError("Hanya pegawai PERMANENT yang didukung dalam cakupan payroll ini");
+  if (input.employmentType !== "PERMANENT") {
+    const policy = await prisma.payrollPolicy.findFirst({where:{companyId:input.companyId,effectiveFrom:{lte:input.effectiveFrom},status:"APPROVED"},orderBy:{effectiveFrom:"desc"}});
+    const config = policy && validateTaxConfig(policy.config);
+    if (input.employmentType !== "CONTRACT" || !config?.employmentTypes?.includes("CONTRACT")) throw validationError("Hanya pegawai PERMANENT atau CONTRACT dengan kebijakan disetujui yang didukung");
+  }
   if (!TAX_STATUSES.includes(input.taxStatus)) throw validationError("Status PTKP tidak valid (TK/0..K/3)");
   if (!JKK_CLASSES.includes(input.jkkRiskClass)) throw validationError("Kelas risiko JKK tidak valid");
   if (!Number.isFinite(input.effectiveFrom.getTime())) throw validationError("Tanggal efektif profil tidak valid");
@@ -195,7 +216,7 @@ export async function createPayrollProfile(input: { companyId: string; userId: s
     if (!member) throw validationError("User ESS wajib anggota aktif perusahaan");
     await prisma.employee.update({ where: { id: employee.id }, data: { payrollUserId: input.payrollUserId } });
   }
-  return prisma.employeePayrollProfile.create({ data: { companyId: input.companyId, employeeId: input.employeeId, effectiveFrom: input.effectiveFrom, employmentType: "PERMANENT", taxStatus: input.taxStatus, jkkRiskClass: input.jkkRiskClass, fixedAllowance, overtimeRate } });
+  return prisma.employeePayrollProfile.create({ data: { companyId: input.companyId, employeeId: input.employeeId, effectiveFrom: input.effectiveFrom, employmentType: input.employmentType, taxStatus: input.taxStatus, jkkRiskClass: input.jkkRiskClass, fixedAllowance, overtimeRate } });
 }
 const componentSchema = z.object({ employeeId: z.string().min(1), thr: amount.default("0"), bonusRegular: amount.default("0"), bonusIrregular: amount.default("0"), overtimeHours: amount.default("0"), voluntaryDeduction: amount.default("0") }).strict();
 export type PayrollComponents = z.input<typeof componentSchema>;
@@ -204,14 +225,17 @@ export async function preparePayrollRun(input: { companyId: string; userId: stri
   const validDate = [start,end].every(d => Number.isFinite(d.getTime()));
   if (!validDate || start.getUTCDate() !== 1 || start.getUTCHours() !== 0 || start.getUTCMinutes() !== 0 || start.getUTCSeconds() !== 0 || start.getUTCMilliseconds() !== 0 || end.getTime() !== Date.UTC(start.getUTCFullYear(),start.getUTCMonth()+1,0)) throw validationError("Konfigurasi periode: hanya satu bulan kalender penuh UTC");
   const date = start.toISOString().slice(0,10);
-  if (date < SUPPORTED_WINDOW.from || date > SUPPORTED_WINDOW.to) unsupportedPayrollConfiguration();
+  if (date < SUPPORTED_WINDOW.from) unsupportedPayrollConfiguration();
   return prisma.$transaction(async tx => {
     const existing = await tx.payrollRun.findFirst({ where: { companyId: input.companyId, periodStart: { lte: end }, periodEnd: { gte: start }, status: { notIn: ["CANCELLED", "VOID"] } } });
     if (existing) throw conflict("Periode payroll sudah ada");
     const policy = await tx.payrollPolicy.findFirst({ where: { companyId: input.companyId, effectiveFrom: { lte: start }, status: "APPROVED" }, orderBy: { effectiveFrom: "desc" } });
     if (!policy) unsupportedPayrollConfiguration();
-    validateTaxConfig(policy.config);
-    const employees = await tx.employee.findMany({ where: { companyId: input.companyId, isActive: true }, orderBy: { id: "asc" } });
+    const runConfig = validateTaxConfig(policy.config);
+    const midMonthPolicy = await tx.payrollPolicy.findFirst({where:{companyId:input.companyId,status:"APPROVED",effectiveFrom:{gt:start,lte:end}}});
+    if (midMonthPolicy && midMonthPolicy.effectiveFrom > start && midMonthPolicy.effectiveFrom <= end) throw validationError("Kebijakan efektif tengah bulan belum didukung");
+    if (end.toISOString().slice(0,10) > (runConfig.validThrough ?? SUPPORTED_WINDOW.to) || (date > SUPPORTED_WINDOW.to && (!runConfig.sources?.length || !runConfig.bpjs.JP?.ceilings?.some(c=>c.from.slice(0,4)===date.slice(0,4))))) unsupportedPayrollConfiguration();
+    const employees = await tx.employee.findMany({ where: { companyId: input.companyId, OR: [{ isActive: true }, { endDate: { gte: start } }], joinDate: { lte: end } }, orderBy: { id: "asc" } });
     if (!employees.length) throw validationError("Tidak ada karyawan aktif");
     const components = z.array(componentSchema).parse(input.components ?? []);
     if (new Set(components.map(c => c.employeeId)).size !== components.length || components.some(c => !employees.some(e => e.id === c.employeeId))) throw validationError("Komponen payroll duplikat atau karyawan tidak aktif/tenant berbeda");
@@ -219,15 +243,46 @@ export async function preparePayrollRun(input: { companyId: string; userId: stri
     for (const employee of employees) {
       const profiles = await tx.employeePayrollProfile.findMany({ where: { companyId: input.companyId, employeeId: employee.id, effectiveFrom: { lte: start } }, orderBy: { effectiveFrom: "desc" }, take: 1 });
       const profile = profiles[0];
-      if (!profile || profile.employmentType !== "PERMANENT" || !employee.joinDate || employee.joinDate > new Date(Date.UTC(start.getUTCFullYear(),0,1)) || employee.endDate) throw validationError("Profil payroll tidak didukung: wajib pegawai tetap resident setahun penuh, join sebelum Januari, tanpa terminasi");
-      const salary = D(employee.baseSalary.toString());
+      if (!profile || !(runConfig.employmentTypes ?? ["PERMANENT"]).includes(profile.employmentType as "PERMANENT") || !employee.joinDate) throw validationError("Profil payroll tidak didukung");
+      const partial = employee.joinDate > new Date(Date.UTC(start.getUTCFullYear(),0,1)) || !!employee.endDate;
+      if (partial && (!runConfig.residentPartialYear || runConfig.proration !== "CALENDAR_DAYS")) throw validationError("Profil partial-year memerlukan kebijakan resident dan proration terverifikasi");
+      if (profile.employmentType === "DAILY") throw validationError("Pegawai harian memerlukan metode PPh21 harian terverifikasi; belum didukung");
+      const daysInMonth = end.getUTCDate();
+      const activeFrom = new Date(Math.max(start.getTime(), employee.joinDate.getTime()));
+      const activeTo = new Date(Math.min(end.getTime(), employee.endDate?.getTime() ?? end.getTime()));
+      const activeDays = Math.max(0, Math.round((activeTo.getTime()-activeFrom.getTime())/86400000)+1);
+      if (!activeDays) continue;
+      const ratio = D(String(activeDays)).div(daysInMonth);
+      const salary = rupiah(D(employee.baseSalary.toString()).mul(ratio));
       if (!salary.isFinite() || salary.lte(0)) throw validationError("Gaji pokok wajib positif");
       const component = components.find(c => c.employeeId === employee.id) ?? componentSchema.parse({ employeeId: employee.id });
-      const allowance = D(amount.parse(profile.fixedAllowance?.toString() ?? "0"));
+      const allowance = rupiah(D(amount.parse(profile.fixedAllowance?.toString() ?? "0")).mul(ratio));
       const overtimeRate = D(amount.parse(profile.overtimeRate?.toString() ?? "0"));
-      if (D(component.overtimeHours).gt(0) && overtimeRate.lte(0)) throw validationError("Tarif lembur profil wajib positif");
-      const overtime = rupiah(D(component.overtimeHours).mul(overtimeRate));
-      const gross = salary.plus(allowance).plus(overtime).plus(component.thr).plus(component.bonusRegular).plus(component.bonusIrregular);
+      const sources = date > SUPPORTED_WINDOW.to ? await tx.hrPayrollSource.findMany({where:{companyId:input.companyId,employeeId:employee.id,status:"APPROVED",workDate:{gte:activeFrom,lte:activeTo}}}) : [];
+      let sourceHours = D("0"), adjustment = D("0");
+      const usedAttendance = new Map<string, Decimal>();
+      for (const source of sources) {
+        if (source.kind === "OVERTIME") {
+          const payload = z.object({hours:amount,attendanceId:z.string(),category:z.enum(["WORKDAY","HOLIDAY"])}).parse(source.payload);
+          const attendance = sources.find(s=>s.id===payload.attendanceId && s.kind==="ATTENDANCE" && s.workDate.getTime()===source.workDate.getTime());
+          const actual = z.object({hours:amount}).safeParse(attendance?.payload);
+          const used = (usedAttendance.get(payload.attendanceId) ?? D("0")).plus(payload.hours);
+          if (!actual.success || used.gt(actual.data.hours)) throw validationError("Rekonsiliasi sumber lembur/absensi gagal");
+          if (payload.category === "HOLIDAY") throw validationError("Lembur hari libur memerlukan formula terverifikasi; belum didukung");
+          usedAttendance.set(payload.attendanceId,used); sourceHours=sourceHours.plus(payload.hours);
+        }
+        if (source.kind === "ADJUSTMENT") {
+          const payload=z.object({amount:z.string(),reason:z.string().min(1),sourceRunId:z.string().min(1)}).parse(source.payload);
+          const value=D(payload.amount);
+          if (!value.isFinite() || value.decimalPlaces()>2) throw validationError("Adjustment tidak valid");
+          adjustment=adjustment.plus(value);
+        }
+      }
+      if (date > SUPPORTED_WINDOW.to && D(component.overtimeHours).gt(0) && !D(component.overtimeHours).eq(sourceHours)) throw validationError("Lembur memerlukan sumber approved dan rekonsiliasi absensi");
+      const hours = date > SUPPORTED_WINDOW.to ? sourceHours : D(component.overtimeHours);
+      if (hours.gt(0) && overtimeRate.lte(0)) throw validationError("Tarif lembur profil wajib positif");
+      const overtime = rupiah(hours.mul(overtimeRate));
+      const gross = salary.plus(allowance).plus(overtime).plus(component.thr).plus(component.bonusRegular).plus(component.bonusIrregular).plus(adjustment);
       const detail: Record<string, { employer: string; employee: string }> = {};
       for (const program of ["JHT","JP","KESEHATAN","JKK","JKM"]) detail[program] = calculateBpjs({ wage: salary.plus(allowance).toString(), program, riskClass: profile.jkkRiskClass, effective: date, policy: policy.config });
       const employeeBpjs = Object.values(detail).reduce((n,p) => n.plus(p.employee),D("0"));
@@ -240,11 +295,11 @@ export async function preparePayrollRun(input: { companyId: string; userId: stri
         if (!saved.success) throw validationError("Riwayat payroll tidak lengkap");
         return { month: p.payrollRun.periodStart.getUTCMonth() + 1, gross: saved.data.taxableGross, pension: saved.data.pension, tax: p.taxAmount.toString() };
       });
-      const tax = calculatePph21({ gross: taxableGross.toString(), pension: pension.toString(), status: profile.taxStatus, month: start.getUTCMonth()+1, prior, policy: policy.config });
+      const tax = calculatePph21({ gross: taxableGross.toString(), pension: pension.toString(), status: profile.taxStatus, month: start.getUTCMonth()+1, firstMonth: employee.joinDate.getUTCFullYear() === start.getUTCFullYear() ? employee.joinDate.getUTCMonth()+1 : 1, finalMonth: employee.endDate?.getUTCFullYear() === start.getUTCFullYear() ? employee.endDate.getUTCMonth()+1 : 12, prior, policy: policy.config });
       const deductions = employeeBpjs.plus(tax.tax).plus(component.voluntaryDeduction);
       const net = gross.minus(deductions);
       if (net.lt(0)) throw validationError("Net payroll negatif tidak didukung");
-      lines.push({ employeeId: employee.id, baseSalary: salary, allowances: allowance, overtime, grossPay: gross, netPay: net, taxAmount: D(tax.tax), bpjsAmount: employeeBpjs, employerBpjs, deductions, taxStatus: profile.taxStatus, detail: { components: { ...component, thr: fixed(D(component.thr)), fixedAllowance: fixed(allowance), overtimeRate: fixed(overtimeRate), overtime: fixed(overtime) }, taxableGross: taxableGross.toString(), pension: pension.toString(), bpjs: detail, tax, policyId: policy.id, profileId: profile.id } });
+      lines.push({ employeeId: employee.id, baseSalary: salary, allowances: allowance, overtime, grossPay: gross, netPay: net, taxAmount: D(tax.tax), bpjsAmount: employeeBpjs, employerBpjs, deductions, taxStatus: profile.taxStatus, detail: { sources: sources.map(s=>({id:s.id,kind:s.kind,workDate:s.workDate.toISOString(),payload:s.payload})), adjustment: fixed(adjustment), proration: { days: activeDays, denominator: daysInMonth, method: "CALENDAR_DAYS" }, components: { ...component, thr: fixed(D(component.thr)), fixedAllowance: fixed(allowance), overtimeRate: fixed(overtimeRate), overtime: fixed(overtime) }, taxableGross: taxableGross.toString(), pension: pension.toString(), bpjs: detail, tax, policyId: policy.id, profileId: profile.id } });
     }
     const totalGross = lines.reduce((n,l) => n.plus(l.grossPay),D("0"));
     const totalDeduction = lines.reduce((n,l) => n.plus(l.deductions),D("0"));

@@ -88,6 +88,8 @@ export function TaxDocumentsClient() {
 
   return (
     <ListPageShell>
+      <a href="/tax/periods" className="underline">Periode, rekonsiliasi, ekspor offline</a>
+      <a href="/tax/setup" className="underline">Profil, aturan efektif, pembayaran</a>
       <PageHeader
         title="Dokumen pajak"
         description="Faktur · bukti potong · ekspor periode · koreksi"
@@ -190,14 +192,11 @@ export function TaxDocumentsClient() {
                   <Field label="DPP">
                     <Input name="dpp" type="number" step="0.01" required />
                   </Field>
-                  <Field label="Pajak">
-                    <Input
-                      name="taxAmount"
-                      type="number"
-                      step="0.01"
-                      required
-                    />
-                  </Field>
+                  <Field label="Tax code efektif"><Input name="taxCode" required /></Field>
+                  <Field label="Tanggal transaksi"><Input name="documentDate" type="date" required /></Field>
+                  <Field label="Source document type"><Input name="sourceDocType" required placeholder="INVOICE" /></Field>
+                  <Field label="Source document ID"><Input name="sourceDocId" required /></Field>
+                  <p>Pajak dihitung dari aturan bertanggal efektif; tidak ada tarif default.</p>
                   <Field label="Periode (YYYYMM)">
                     <Input name="taxPeriod" defaultValue={yearMonth()} />
                   </Field>
@@ -310,7 +309,7 @@ export function TaxDocumentsClient() {
                       />
                     </Field>
                     <Field label="Catatan">
-                      <Input name="notes" />
+                      <Input name="notes" required />
                     </Field>
                   </FormGrid>
                   <MutationError error={mutation.error} />

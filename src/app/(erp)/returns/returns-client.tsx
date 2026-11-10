@@ -8,7 +8,7 @@ import { useReturnsMutation, useReturnsQuery } from "@/hooks/use-erp-queries";
 import { apiGet, apiPost, formToObject } from "@/lib/api-client";
 import { formatIdr } from "@/lib/money";
 
-type ReturnDoc = { id: string; number: string; status: string; total: string; warehouseId: string; disposition?: string; reason?: string; settlementStatus?: string; refundAmount?: string; refundedAt?: string; replacementDeliveryId?: string };
+type ReturnDoc = { id: string; number: string; status: string; total: string; warehouseId: string; disposition?: string; reason?: string; settlementStatus?: string; refundAmount?: string; refundedAt?: string; replacementDeliveryId?: string; replacement?: { id: string; number: string; status: string; warehouseId: string } };
 type SourceItem = { id: string; productId: string; quantity: string; returned: string; description?: string };
 type Data = {
   warehouses: { id: string; code: string; type: string }[];
@@ -31,6 +31,7 @@ export function ReturnsClient() {
   const [sourceItemId, setSourceItemId] = useState("");
   const [requestKey, setRequestKey] = useState("");
   const [inspection, setInspection] = useState<Record<string, string>>({});
+  const [replacementKeys, setReplacementKeys] = useState<Record<string, string>>({});
   const source = kind === "sales" ? data?.salesInvoices.find(s => s.id === sourceId) : data?.goodsReceipts.find(s => s.id === sourceId);
   const item = source?.items.find(i => i.id === sourceItemId);
 
@@ -65,16 +66,16 @@ export function ReturnsClient() {
               <td className="p-3">
                 {r.status === "DRAFT" && <div className="flex gap-2"><Input aria-label={`Catatan inspeksi ${r.number}`} placeholder="Catatan inspeksi wajib" value={inspection[r.id] || ""} onChange={e => setInspection({ ...inspection, [r.id]: e.target.value })} /><Button disabled={mutation.isPending || !inspection[r.id]?.trim()} onClick={() => mutation.mutate({ action: `approve_${k}_return`, id: r.id, warehouseId: r.warehouseId, inspectionNotes: inspection[r.id], disposition: "QUARANTINE" })}>Approve</Button></div>}
                 {r.status === "APPROVED" && <Button disabled={mutation.isPending} onClick={() => mutation.mutate({ action: `post_${k}_return`, id: r.id, warehouseId: r.warehouseId })}>{k === "sales" ? "Terima karantina" : "Kirim ke pemasok"}</Button>}
-                {k === "sales" && r.status === "POSTED" && <form className="grid gap-2" onSubmit={e => { e.preventDefault(); const body = formToObject(e.currentTarget); mutation.mutate({ ...body, id: r.id }); }}>
-                  <Select aria-label="Aksi lanjutan" name="action"><option value="release">Release to stock</option><option value="dispose">Scrap</option><option value="approve_settlement">Approve settlement refund</option><option value="refund">Bayar refund</option><option value="replacement" disabled>Replacement belum tersedia — gunakan credit note/refund</option></Select>
+                {k === "sales" && r.status === "POSTED" && <form className="grid gap-2" onSubmit={e => { e.preventDefault(); const body = formToObject(e.currentTarget); const signature = `${r.id}:${body.targetWarehouseId}`; const key = replacementKeys[signature] || crypto.randomUUID(); if (body.action === "replacement") setReplacementKeys({ ...replacementKeys, [signature]: key }); mutation.mutate({ ...body, id: r.id, ...(body.action === "replacement" ? { idempotencyKey: key } : {}) }); }}>
+                  <Select aria-label="Aksi lanjutan" name="action"><option value="release">Release to stock</option><option value="dispose">Scrap</option><option value="approve_settlement" disabled={Boolean(r.replacement)}>Approve settlement refund</option><option value="refund" disabled={Boolean(r.replacement)}>Bayar refund</option><option value="replacement" disabled={Boolean(r.replacement || r.replacementDeliveryId || r.refundedAt || r.settlementStatus !== "DRAFT")}>Replacement independen · kirim semua qty</option></Select>
                   <Select aria-label="Gudang utama tujuan" name="targetWarehouseId"><option value="">Gudang utama tujuan</option>{data.warehouses.filter(w => w.type === "MAIN").map(w => <option key={w.id} value={w.id}>{w.code}</option>)}</Select>
                   <Input aria-label="Catatan inspeksi release" name="inspectionNotes" placeholder="Catatan inspeksi release" />
                   <Input aria-label="Jumlah settlement atau refund" name="amount" type="number" min="0.01" step="0.01" placeholder="Jumlah settlement / refund" />
                   <Input aria-label="Bank account ID refund" name="bankAccountId" placeholder="Bank account ID refund" />
-                  <span>Settlement: {r.settlementStatus} {r.refundAmount && formatIdr(r.refundAmount)} {r.refundedAt && "· sudah refund"} {r.replacementDeliveryId && `· DO ${r.replacementDeliveryId}`}</span>
+                  <span>Settlement: {r.settlementStatus} {r.refundAmount && formatIdr(r.refundAmount)} {r.refundedAt && "· sudah refund"} {r.replacementDeliveryId && `· DO ${r.replacementDeliveryId}`} {r.replacement && `· ${r.replacement.number} ${r.replacement.status}`}</span>
                   <Button disabled={mutation.isPending} type="submit">Jalankan aksi approved</Button>
                 </form>}
-                {r.status === "POSTED" && <Button disabled={noteMutation.isPending} onClick={() => noteMutation.mutate(k === "sales" ? { action: "from_sales_return", salesReturnId: r.id } : { action: "from_purchase_return", purchaseReturnId: r.id })}>{k === "sales" ? "CN" : "DN"} dari {r.number}</Button>}
+                {r.status === "POSTED" && <Button disabled={noteMutation.isPending || (k === "sales" && Boolean(r.replacement || r.replacementDeliveryId))} onClick={() => noteMutation.mutate(k === "sales" ? { action: "from_sales_return", salesReturnId: r.id } : { action: "from_purchase_return", purchaseReturnId: r.id })}>{k === "sales" ? "CN" : "DN"} dari {r.number}</Button>}
               </td>
             </tr>)}
           </Table>

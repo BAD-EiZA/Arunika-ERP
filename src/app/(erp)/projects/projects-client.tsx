@@ -34,13 +34,17 @@ import {
 } from "lucide-react";
 
 type ProjectsData = {
+  canPost: boolean;
+  accounts: Array<{ code: string; name: string; type: string }>;
+  allocations: Array<{ id: string; projectId: string; journalLineId: string; kind: string; amount: string; status: string }>;
+  sourceLines: Array<{ id: string; kind: "PAYROLL" | "MATERIAL"; label: string; amount: string }>;
   projects: Array<{
     id: string;
     code: string;
     name: string;
     status: string;
     budgetAmount: string;
-    actualCost: string;
+    actualCost: string | null;
     billedAmount: string;
     invoices: Array<{ id: string; number: string; total: string; status: string }>;
     billings: Array<{ sourceType: string; sourceId: string }>;
@@ -61,7 +65,7 @@ type ProjectsData = {
       status: string;
       workDate: string;
     }>;
-    expenses: Array<{ id: string; description: string; amount: string }>;
+    expenses: Array<{ id: string; description: string; amount: string; status: string; debitAccountCode: string | null; creditAccountCode: string | null }>;
   }>;
   employees: Array<{ id: string; name: string; code: string }>;
   customers: Array<{ id: string; name: string }>;
@@ -83,26 +87,19 @@ export function ProjectsClient() {
   const query = useProjectsQuery();
   const mutation = useProjectsMutation();
   const data = query.data as ProjectsData | undefined;
-  const [profit, setProfit] = useState<Record<string, string> | null>(null);
+  const [profit, setProfit] = useState<{ coverage: string; allocatedLaborCost: string; materialCost: string; invalidAllocationCount: number; recordedMargin: string; budget: string; actualCost: string | null; laborCost: string | null; expenseCost: string; billedAmount: string; margin: string | null; variance: string | null; knownCost: string; costStatus: string; costNote: string; unverifiedExpenseCount: number; approvedHours: string } | null>(null);
   const [formMode, setFormMode] = useState<FormMode>("none");
   const projects = data?.projects ?? [];
   const projectsPage = useClientPage(projects, 20);
 
   const stats = useMemo(() => {
     let budget = 0;
-    let actual = 0;
     let tasks = 0;
     for (const p of projects) {
       budget += Number(p.budgetAmount) || 0;
-      actual += Number(p.actualCost) || 0;
       tasks += p.tasks.length;
     }
-    return {
-      count: projects.length,
-      budget,
-      actual,
-      tasks,
-    };
+    return { count: projects.length, budget, tasks };
   }, [projects]);
 
   function toggle(mode: FormMode) {
@@ -172,8 +169,8 @@ export function ProjectsClient() {
                 icon={Wallet}
               />
               <StatCard
-                label="Actual"
-                value={formatIdr(stats.actual)}
+                label="Biaya aktual"
+                value="Belum diverifikasi"
               />
               <StatCard
                 label="Tasks"
@@ -183,6 +180,25 @@ export function ProjectsClient() {
             </div>
 
             <MutationError error={mutation.error} />
+            {data.canPost ? <Card title="Project accounting — approval, GL, alokasi biaya aktual">
+              <p className="text-sm">Alokasi seluruh baris jurnal payroll/material; bukan tarif estimasi. Pembalikan hanya membatalkan atribusi project, tidak membalik GL sumber. Sumber yang dibatalkan tidak dapat dipakai ulang.</p>
+              {projects.map((p) => <section key={p.id} className="space-y-3 border-b py-3">
+                <h3 className="font-medium">{p.code} — {p.name}</h3>
+                {p.expenses.map((expense) => <div key={expense.id} className="space-y-2">
+                  <p>{expense.description} · {formatIdr(expense.amount)} · {expense.status} {expense.debitAccountCode ? `(${expense.debitAccountCode} / ${expense.creditAccountCode})` : ""}</p>
+                  {expense.status === "DRAFT" ? <form className="flex flex-wrap gap-2" onSubmit={(event) => { event.preventDefault(); mutation.mutate({ action: "approve_expense", id: expense.id, ...formToObject(event.currentTarget) }); }}>
+                    <Field label="Debit biaya"><Select name="debitAccountCode" required defaultValue=""><option value="">Pilih akun</option>{data.accounts.filter((a) => ["EXPENSE", "COGS", "OTHER_EXPENSE"].includes(a.type)).map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</Select></Field>
+                    <Field label="Credit penyelesaian / utang"><Select name="creditAccountCode" required defaultValue=""><option value="">Pilih akun</option>{data.accounts.filter((a) => ["ASSET", "LIABILITY"].includes(a.type)).map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}</Select></Field>
+                    <Button disabled={mutation.isPending}>Approve expense</Button>
+                  </form> : expense.status === "APPROVED" ? <Button disabled={mutation.isPending} onClick={() => mutation.mutate({ action: "post_expense", id: expense.id })}>Post expense ke GL</Button> : null}
+                </div>)}
+                <form className="flex flex-wrap gap-2" onSubmit={(event) => { event.preventDefault(); const values = formToObject(event.currentTarget); const source = data.sourceLines.find((l) => l.id === values.journalLineId); if (source) mutation.mutate({ action: "allocate_cost", projectId: p.id, journalLineId: source.id, kind: source.kind }); }}>
+                  <Field label="Sumber biaya POSTED (200 terbaru; validasi ulang saat simpan)"><Select name="journalLineId" required defaultValue=""><option value="">Pilih baris jurnal</option>{data.sourceLines.map((l) => <option key={l.id} value={l.id}>{l.kind} · {l.label} · {formatIdr(l.amount)}</option>)}</Select></Field>
+                  <Button disabled={mutation.isPending}>Alokasi biaya aktual</Button>
+                </form>
+                {data.allocations.filter((a) => a.projectId === p.id).map((a) => <div key={a.id}><p>{a.kind} · {a.journalLineId} · {formatIdr(a.amount)} · {a.status}</p>{a.status === "POSTED" ? <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); mutation.mutate({ action: "reverse_allocation", id: a.id, ...formToObject(event.currentTarget) }); }}><Field label="Alasan pembalikan"><Input name="reason" required /></Field><Button disabled={mutation.isPending}>Batalkan alokasi</Button></form> : null}</div>)}
+              </section>)}
+            </Card> : null}
             <Card title="Billing proposal / invoice project">
               {projects.map((p) => <section key={p.id} className="space-y-2 border-b py-3">
                 <h3 className="font-medium">{p.code} — {p.name} · Billed {formatIdr(p.billedAmount)}</h3>
@@ -286,6 +302,7 @@ export function ProjectsClient() {
                           code: body.code,
                           name: body.name,
                           plannedHours: body.plannedHours,
+                          billableAmount: body.billableAmount,
                         },
                         {
                           onSuccess: () => {
@@ -431,7 +448,7 @@ export function ProjectsClient() {
             ) : null}
 
             {formMode === "expense" ? (
-              <Card title="Tambah expense">
+              <Card title="Tambah expense (draft, belum diposting ke GL)">
                 {projects.length === 0 ? (
                   <EmptyState
                     compact
@@ -525,7 +542,7 @@ export function ProjectsClient() {
                       "Kode",
                       "Nama",
                       "Budget",
-                      "Actual",
+                      "Biaya aktual",
                       "Status",
                       "Tasks",
                       "Aksi",
@@ -541,7 +558,7 @@ export function ProjectsClient() {
                           {formatIdr(p.budgetAmount)}
                         </td>
                         <td className="px-3 py-2 font-semibold tabular-nums text-[#0F4C75]">
-                          {formatIdr(p.actualCost)}
+                          Belum diverifikasi
                         </td>
                         <td className="px-3 py-2">
                           <Badge tone={projTone(p.status)}>{p.status}</Badge>
@@ -582,7 +599,7 @@ export function ProjectsClient() {
                                   },
                                   {
                                     onSuccess: (res) =>
-                                      setProfit(res as Record<string, string>),
+                                      setProfit(res as NonNullable<typeof profit>),
                                   },
                                 );
                               }}
@@ -606,7 +623,8 @@ export function ProjectsClient() {
             </Card>
 
             {profit ? (
-              <Card title="Profitability">
+              <Card title="Profitability — sumber biaya tercatat">
+                <p className="mb-3 text-sm">{profit.costNote} Status biaya: {profit.costStatus === "UNKNOWN" ? "Belum lengkap" : "Terverifikasi untuk sumber tercatat"}. Biaya terverifikasi: {formatIdr(profit.knownCost)}. Expense belum terverifikasi: {profit.unverifiedExpenseCount}.</p>
                 <div className="grid gap-2 text-sm sm:grid-cols-3">
                   <div>
                     Budget:{" "}
@@ -617,19 +635,24 @@ export function ProjectsClient() {
                   <div>
                     Actual:{" "}
                     <span className="font-semibold text-[#0F4C75]">
-                      {formatIdr(String(profit.actualCost))}
+                      {profit.actualCost === null ? "Belum diketahui" : formatIdr(profit.actualCost)}
                     </span>
                   </div>
-                  <div>Labor: {formatIdr(String(profit.laborCost))}</div>
+                  <div>Labor: {profit.laborCost === null ? "Belum diketahui (cakupan payroll belum lengkap)" : formatIdr(profit.laborCost)}</div>
+                  <div>Payroll dialokasikan: {formatIdr(profit.allocatedLaborCost)}</div>
+                  <div>Material dialokasikan: {formatIdr(profit.materialCost)}</div>
+                  <div>Alokasi tidak valid: {profit.invalidAllocationCount}</div>
+                  <div>Cakupan: {profit.coverage} — belum membuktikan seluruh biaya</div>
+                  <div>Margin subtotal sumber tercatat: {formatIdr(profit.recordedMargin)} (bukan laba lengkap)</div>
                   <div>Expense: {formatIdr(String(profit.expenseCost))}</div>
                   <div>Billed: {formatIdr(String(profit.billedAmount))}</div>
                   <div>
-                    Margin:{" "}
+                    Margin sumber tercatat:{" "}
                     <span className="font-semibold text-[#0F4C75]">
-                      {formatIdr(String(profit.margin))}
+                      {profit.margin === null ? "Belum dapat dihitung" : formatIdr(profit.margin)}
                     </span>
                   </div>
-                  <div>Variance: {formatIdr(String(profit.variance))}</div>
+                  <div>Variance: {profit.variance === null ? "Belum dapat dihitung" : formatIdr(profit.variance)}</div>
                   <div>Hours: {String(profit.approvedHours)}</div>
                 </div>
               </Card>

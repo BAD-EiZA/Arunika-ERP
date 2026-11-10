@@ -70,8 +70,11 @@ export async function GET() {
     const invReturned = new Map(returnedByInvoiceItem.map((r) => [r.sourceItemId, r._sum.quantity ?? 0]));
     const grReturned = new Map(returnedByReceiptItem.map((r) => [r.sourceReceiptItemId, r._sum.quantity ?? 0]));
 
+    const replacements = await prisma.returnReplacement.findMany({ where: { companyId: ctx.companyId, salesReturnId: { in: salesReturns.map(r => r.id) } }, select: { id: true, salesReturnId: true, number: true, status: true, warehouseId: true } });
+    const replacementByReturn = new Map(replacements.map(r => [r.salesReturnId, r]));
     return {
       salesReturns: salesReturns.map((r) => ({
+        replacement: replacementByReturn.get(r.id) ?? null,
         id: r.id,
         number: r.number,
         status: r.status,
@@ -199,7 +202,7 @@ export async function POST(req: Request) {
       if (body.action === "dispose") return disposeSalesReturn(input);
       if (body.action === "approve_settlement") return approveReturnSettlement({ ...input, amount: body.amount ?? 0 });
       if (body.action === "refund") return refundSalesReturn({ ...input, bankAccountId: String(body.bankAccountId ?? ""), amount: body.amount ?? 0 });
-      return replaceSalesReturn({ ...input, targetWarehouseId: String(body.targetWarehouseId ?? "") });
+      return replaceSalesReturn({ ...input, targetWarehouseId: String(body.targetWarehouseId ?? ""), idempotencyKey: body.idempotencyKey });
     }
     if (body.action === "advance_claim") {
       const ctx = await requirePermission("claim:manage");

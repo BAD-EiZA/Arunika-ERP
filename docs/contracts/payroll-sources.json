@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": 1,
+      "url": "https://www.bpjsketenagakerjaan.go.id/penerima-upah.html",
+      "title": "",
+      "accessed": "2026-11-10",
+      "quotes": [
+        {
+          "text": "Dasar perhitungan iuran dengan upah maksimal sebesar Rp 10.547.400,00.",
+          "added": "2026-11-10"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "url": "https://494075.fs1.hubspotusercontent-na1.net/hubfs/494075/compliance-portal/notification-number-b1226022026.pdf",
+      "title": "",
+      "accessed": "2026-11-10"
+    },
+    {
+      "id": 3,
+      "url": "https://jdih.kemenkeu.go.id/api/download/e60a82e0-b218-40f5-9d18-b924aa1e11ce/2023pmkeuangan168.pdf",
+      "title": "",
+      "accessed": "2026-11-10",
+      "quotes": [
+        {
+          "text": "Pegawai Tetap adalah Pegawai yang menerima atau memperoleh penghasilan secara teratur, termasuk anggota dewan komisaris dan anggota dewan pengawas, serta Pegawai yang bekerja berdasarkan kontrak untuk suatu jangka waktu tertentu sepanjang Pegawai yang bersangkutan bekerja penuh dalam pekerjaan tersebut.",
+          "added": "2026-11-10"
+        }
+      ]
+    }
+  ]
+}

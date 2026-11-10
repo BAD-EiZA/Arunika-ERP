@@ -361,6 +361,10 @@ model CompanySetting {
   poApprovalRequired  Boolean @default(true)
   soApprovalRequired  Boolean @default(false)
 
+  inventoryAccountCode String?
+  stockGainAccountCode String?
+  stockLossAccountCode String?
+
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 }
 
@@ -430,6 +434,8 @@ model Warehouse {
   goodsReceipts    GoodsReceipt[]
   salesOrders      SalesOrder[]
   deliveryOrders   DeliveryOrder[]
+
+  returnReplacements ReturnReplacement[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -561,6 +567,8 @@ model Product {
   bomsAsFinished    BillOfMaterials[]      @relation("BomFinished")
   bomComponents     BomItem[]
   productionOrders  ProductionOrder[]      @relation("ProductionFinished")
+
+  replacementItems ReturnReplacementItem[]
 
   @@unique([companyId, sku])
   @@index([companyId])
@@ -1318,7 +1326,7 @@ model SalesInvoice {
   salesOrderId    String?
   deliveryOrderId String?
   projectId       String?
-  project         Project? @relation(fields: [projectId], references: [id])
+  project         Project? @relation(fields: [projectId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   projectBilling  ProjectBilling?
   number          String
   status          DocumentStatus @default(DRAFT)
@@ -1351,6 +1359,7 @@ model SalesInvoice {
 
   @@unique([companyId, number])
   @@unique([companyId, idempotencyKey])
+  @@index([projectId])
   @@index([companyId])
   @@index([customerId])
   @@index([dueDate])
@@ -1516,6 +1525,8 @@ model JournalLine {
   account    Account     @relation(fields: [accountId], references: [id])
   costCenter CostCenter? @relation(fields: [costCenterId], references: [id])
 
+  projectCostAllocation ProjectCostAllocation?
+
   @@index([journalId])
   @@index([accountId])
   @@index([costCenterId])
@@ -1548,6 +1559,8 @@ model PostingRuleVersion {
   createdAt     DateTime  @default(now())
 
   postingRule PostingRule @relation(fields: [postingRuleId], references: [id], onDelete: Cascade)
+
+  returnReplacements ReturnReplacement[]
 
   @@unique([postingRuleId, version])
 }
@@ -1691,6 +1704,16 @@ model TaxRegistration {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
+  effectiveFrom DateTime @default(now())
+  effectiveTo DateTime?
+  nik String?
+  taxAddress String?
+  taxContact String?
+  signingAuthority String?
+  authorizationMetadata Json?
+  taxCalendar String?
+  changedById String?
+
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([companyId])
@@ -1710,6 +1733,13 @@ model TaxCode {
   isActive      Boolean      @default(true)
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
+
+  legalReference String?
+  category String?
+  baseMultiplier Decimal @default(1) @db.Decimal(18,8)
+  inclusive Boolean @default(false)
+  recoverablePercent Decimal @default(100) @db.Decimal(8,4)
+  rounding String @default("HALF_UP")
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
@@ -1738,8 +1768,15 @@ model TaxDocument {
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
+  taxCodeId String?
+  glAccountCode String?
+  direction String?
+  ruleSnapshot Json?
+  createdById String?
+
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
+  @@unique([companyId, replacesId])
   @@unique([companyId, number, version])
   @@index([companyId])
   @@index([taxPeriod])
@@ -2021,6 +2058,8 @@ model MrpRun {
   createdById String?
   createdAt   DateTime @default(now())
 
+  parameters Json?
+
   company Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
   lines   MrpSuggestion[]
 
@@ -2040,6 +2079,11 @@ model MrpSuggestion {
   dueDate       DateTime?
   sourceRef     String?
   isConverted   Boolean @default(false)
+
+  releaseDate DateTime?
+  decision String @default("PENDING")
+  reviewedById String?
+  reviewedAt DateTime?
 
   mrpRun MrpRun @relation(fields: [mrpRunId], references: [id], onDelete: Cascade)
 
@@ -2074,6 +2118,9 @@ model Employee {
   payrollLines PayrollLine[]
   payrollProfiles EmployeePayrollProfile[]
   timesheets  Timesheet[]
+
+  hrPayrollSources HrPayrollSource[]
+  leaveLedger LeaveLedger[]
 
   @@unique([companyId, id])
 
@@ -2273,6 +2320,7 @@ model SalesReturn {
   updatedAt       DateTime       @updatedAt
 
   company Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  replacement ReturnReplacement?
   items   SalesReturnItem[]
 
   @@unique([companyId, number])
@@ -2292,6 +2340,7 @@ model SalesReturnItem {
   unitPrice     Decimal @db.Decimal(18, 4)
   total         Decimal @db.Decimal(18, 2)
 
+  replacementItem ReturnReplacementItem?
   salesReturn SalesReturn @relation(fields: [salesReturnId], references: [id], onDelete: Cascade)
 
   @@index([salesReturnId])
@@ -2399,6 +2448,8 @@ model Project {
   invoices   SalesInvoice[]
   billings   ProjectBilling[]
 
+  costAllocations ProjectCostAllocation[]
+
   @@unique([companyId, code])
   @@index([companyId])
 }
@@ -2446,8 +2497,14 @@ model ProjectExpense {
   description String
   amount      Decimal        @db.Decimal(18, 2)
   expenseDate DateTime       @default(now())
-  status      DocumentStatus @default(POSTED)
+  status      DocumentStatus @default(DRAFT)
   createdAt   DateTime       @default(now())
+
+  debitAccountCode String?
+  creditAccountCode String?
+  approvedById String?
+  approvedAt DateTime?
+  journalId String? @unique
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
@@ -2822,3 +2879,133 @@ model BankFeed {
 
 
 
+
+model ProjectCostAllocation {
+  id String @id @default(cuid())
+  companyId String
+  projectId String
+  journalLineId String @unique
+  kind String
+  amount Decimal @db.Decimal(18, 2)
+  status DocumentStatus @default(POSTED)
+  createdById String
+  createdAt DateTime @default(now())
+  reversedById String?
+  reversedAt DateTime?
+  reversalReason String?
+  project Project @relation(fields: [projectId], references: [id])
+  journalLine JournalLine @relation(fields: [journalLineId], references: [id])
+  @@index([companyId, projectId])
+}
+
+model ReturnReplacement {
+  id String @id @default(cuid())
+  companyId String
+  salesReturnId String @unique
+  warehouseId String
+  number String
+  idempotencyKey String
+  requestHash String
+  status DocumentStatus @default(DRAFT)
+  postingRuleVersionId String
+  createdById String
+  postedAt DateTime?
+  createdAt DateTime @default(now())
+  items ReturnReplacementItem[]
+  salesReturn SalesReturn @relation(fields: [salesReturnId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  postingRuleVersion PostingRuleVersion @relation(fields: [postingRuleVersionId], references: [id])
+  @@unique([companyId, number])
+  @@unique([companyId, idempotencyKey])
+}
+
+model ReturnReplacementItem {
+  id String @id @default(cuid())
+  replacementId String
+  sourceReturnItemId String @unique
+  productId String
+  quantity Decimal @db.Decimal(18, 4)
+  unitCost Decimal @db.Decimal(18, 4)
+  replacement ReturnReplacement @relation(fields: [replacementId], references: [id], onDelete: Restrict)
+  sourceReturnItem SalesReturnItem @relation(fields: [sourceReturnItemId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+  @@unique([replacementId, productId])
+}
+
+model HrPayrollSource {
+  id String @id @default(cuid())
+  companyId String
+  employeeId String
+  kind String
+  workDate DateTime
+  payload Json
+  status String @default("PENDING_APPROVAL")
+  createdById String
+  approvedById String?
+  approvedAt DateTime?
+  createdAt DateTime @default(now())
+  employee Employee @relation(fields: [companyId, employeeId], references: [companyId, id], onDelete: Restrict)
+  @@index([companyId, employeeId, workDate])
+}
+
+model LeaveLedger {
+  id String @id @default(cuid())
+  companyId String
+  employeeId String
+  leaveType String
+  effectiveDate DateTime
+  days Decimal @db.Decimal(8, 2)
+  sourceKey String
+  reason String
+  createdById String
+  createdAt DateTime @default(now())
+  employee Employee @relation(fields: [companyId, employeeId], references: [companyId, id], onDelete: Restrict)
+  @@unique([companyId, sourceKey])
+  @@index([companyId, employeeId, leaveType, effectiveDate])
+}
+
+model TaxPeriod {
+ id String @id @default(cuid())
+ companyId String
+ period String
+ status String @default("OPEN")
+ revision Int @default(0)
+ snapshot Json?
+ history Json?
+ closedAt DateTime?
+ closedById String?
+ @@unique([companyId, period])
+ @@index([companyId])
+}
+model TaxExportBatch {
+ id String @id @default(cuid())
+ companyId String
+ period String
+ revision Int
+ format String
+ checksum String
+ payload String
+ status String @default("OFFLINE_READY")
+ submissionReference String?
+ responses Json?
+ createdById String
+ createdAt DateTime @default(now())
+ @@unique([companyId, period, revision, format])
+ @@index([companyId])
+}
+model TaxPayment {
+ id String @id @default(cuid())
+ companyId String
+ period String
+ amount Decimal @db.Decimal(18,2)
+ billingReference String
+ bankReference String
+ paymentDate DateTime
+ allocations Json
+ journalId String?
+ notes String?
+ createdById String
+ createdAt DateTime @default(now())
+ @@unique([companyId, bankReference])
+ @@index([companyId])
+}

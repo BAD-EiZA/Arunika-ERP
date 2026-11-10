@@ -84,7 +84,7 @@ export function PayrollClient() {
     <ListPageShell>
       <PageHeader
         title="Payroll"
-        description="2026 saja · pegawai tetap resident setahun penuh · tunjangan tetap, THR/bonus, lembur · Januari–Desember berurutan"
+        description="Bulanan · policy efektif tervalidasi · kontrak resident dengan prorata eksplisit · sumber lembur approved · pajak direkonsiliasi bulan akhir"
         actions={
           <Button
             type="button"
@@ -98,7 +98,7 @@ export function PayrollClient() {
       />
 
       <MutationError error={mutation.error} />
-      <p className="text-sm">Kebijakan wajib dikonfirmasi manusia; bukan validasi profesional otomatis. Pembuat kebijakan/run tidak boleh menyetujui sendiri. Join setelah 1 Januari, terminasi, nonresident, dan payroll awal di tengah tahun tidak didukung. Buat akun aktif 5200/5300 (EXPENSE), 2105/2106/2101 (LIABILITY) melalui <a className="underline" href="/finance/accounts">manajemen akun</a> sebelum posting.</p>
+      <p className="text-sm">Kebijakan wajib dikonfirmasi tenaga profesional; maker dan checker terpisah. Tahun setelah 2026 memerlukan validThrough, sources, ceiling JP per tahun, serta konfigurasi employmentTypes/proration/residentPartialYear. Pegawai harian, nonresident, dan lembur hari libur tetap ditolak. Siapkan sumber absensi/lembur di <a className="underline" href="/hr">HR</a>. Akun 5200/5300 (EXPENSE), 2105/2106/2101 (LIABILITY) wajib tersedia di <a className="underline" href="/finance/accounts">manajemen akun</a>.</p>
       <p className="text-sm"><a href="/api/erp/payroll/payslips" className="underline">Slip saya (ESS)</a> · Potongan sukarela memerlukan akun 2107 LIABILITY; pencairannya di luar settlement 2101/2105/2106. THR/bonus masuk TER bulanan; Desember menghitung ulang bruto tahunan. Tarif lembur profil harus diverifikasi HR; checker menyetujui jam bersama payroll.</p>
       <Card title="Pencairan payroll">{(data?.disbursements ?? []).map(d => <div key={d.id} className="flex gap-3 p-2"><span>{d.accountCode} · {formatIdr(d.amount)} · {d.status}</span>{d.status === "PENDING_APPROVAL" && <Button disabled={mutation.isPending} onClick={() => mutation.mutate({ action: "settleDisbursement", id: d.id })}>Checker: setujui dan posting pembayaran</Button>}</div>)}</Card>
       <Card title="1. Kebijakan efektif (immutable; buat versi baru untuk perubahan)">
@@ -125,16 +125,17 @@ export function PayrollClient() {
           {p.status === "PENDING_APPROVAL" && <Button disabled={mutation.isPending} onClick={() => mutation.mutate({ action: "approvePolicy", id: p.id })}>Konfirmasi aturan dan setujui kebijakan</Button>}
         </div>)}
       </Card>
-      <Card title="2. Profil pajak karyawan tetap resident">
+      <Card title="2. Profil pajak karyawan resident">
         <form className="space-y-3" onSubmit={e => { e.preventDefault(); mutation.mutate({ action: "createProfile", employmentType: "PERMANENT", ...formToObject(e.currentTarget) }); }}>
           <Field label="Karyawan"><select name="employeeId" aria-label="Karyawan" required className="rounded border p-2">{(data?.employees ?? []).map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</select></Field>
+          <Field label="Tipe pegawai"><select name="employmentType" aria-label="Tipe pegawai" className="rounded border p-2"><option value="PERMANENT">Tetap</option><option value="CONTRACT">Kontrak resident (wajib policy approved)</option></select></Field>
           <Field label="Efektif"><Input type="date" name="effectiveFrom" required /></Field>
           <Field label="PTKP"><select name="taxStatus" aria-label="PTKP" className="rounded border p-2">{["TK/0","TK/1","TK/2","TK/3","K/0","K/1","K/2","K/3"].map(s => <option key={s}>{s}</option>)}</select></Field>
           <Field label="Kelas risiko JKK"><select name="jkkRiskClass" aria-label="Kelas risiko JKK" className="rounded border p-2">{["SANGAT_RENDAH","RENDAH","SEDANG","TINGGI","SANGAT_TINGGI"].map(s => <option key={s}>{s}</option>)}</select></Field>
           <Field label="Tunjangan tetap"><Input name="fixedAllowance" type="number" min="0" step="0.01" defaultValue="0" /></Field>
           <Field label="Tarif lembur per jam (diverifikasi HR)"><Input name="overtimeRate" type="number" min="0" step="0.01" defaultValue="0" /></Field>
           <Field label="User ID ESS (anggota aktif, opsional)"><Input name="payrollUserId" /></Field>
-          <label><input type="checkbox" required /> Saya konfirmasi pegawai tetap resident setahun penuh; bukan pegawai baru/terminasi/nonresident.</label>
+          <label><input type="checkbox" required /> Saya konfirmasi resident; metode pajak, prorata join/terminasi ditinjau profesional sesuai policy.</label>
           <Button type="submit" disabled={mutation.isPending || !data?.employees.length}>Simpan profil baru</Button>
         </form>
         {(data?.profiles ?? []).map(p => <p key={p.id}>{data?.employees.find(e => e.id === p.employeeId)?.name ?? p.employeeId} · {p.taxStatus} · {p.jkkRiskClass} · {formatDateId(p.effectiveFrom)}</p>)}

@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 
 type HrData = {
+  sources?: Array<{id:string;employeeId:string;kind:string;workDate:string;status:string;payload:unknown}>;
   employees: Array<{
     id: string;
     code: string;
@@ -71,6 +72,8 @@ export function HrClient() {
   const mutation = useHrMutation();
   const data = query.data as HrData | undefined;
   const [formMode, setFormMode] = useState<FormMode>("none");
+  const [sourceError,setSourceError]=useState("");
+  const [balance,setBalance]=useState("");
   const employeesPage = useClientPage(data?.employees ?? [], 20);
   const leavesPage = useClientPage(data?.leaves ?? [], 20);
   const attendancePage = useClientPage(data?.attendance ?? [], 20);
@@ -153,6 +156,33 @@ export function HrClient() {
             </div>
 
             <MutationError error={mutation.error} />
+            {data.sources && <Card title="Sumber payroll terverifikasi (mulai 2027)">
+              <p className="text-sm">Absensi mentah tetap terpisah. Ajukan absensi final, lalu lembur dengan attendanceId dari sumber approved. Koreksi/entitlement/expiry/carry cuti berupa ledger beralasan, bukan edit saldo.</p>
+              <form className="space-y-2" onSubmit={e=>{e.preventDefault();const v=formToObject(e.currentTarget);try{const payload=JSON.parse(String(v.payload));setSourceError("");mutation.mutate({action:"source",employeeId:v.employeeId,kind:v.kind,workDate:v.workDate,payload});}catch{setSourceError("JSON sumber tidak valid");}}}>
+                <Field label="Karyawan"><Select name="employeeId" required>{data.employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
+                <Field label="Jenis"><Select name="kind"><option>ATTENDANCE</option><option>OVERTIME</option><option>ADJUSTMENT</option><option>LEAVE_GRANT</option></Select></Field>
+                <Field label="Tanggal efektif"><Input name="workDate" type="date" required /></Field>
+                <Field label="Payload JSON"><textarea name="payload" aria-label="Payload sumber JSON" rows={4} className="w-full rounded border p-2" required defaultValue={'{"hours":"8","source":"clock","reason":"Absensi final"}'} /></Field>
+                <details><summary>Contoh payload</summary><pre className="overflow-auto text-xs">{JSON.stringify({OVERTIME:{hours:"2",attendanceId:"ID sumber absensi approved",category:"WORKDAY",reason:"Perpanjangan shift"},ADJUSTMENT:{amount:"100000",sourceRunId:"ID payroll POSTED",reason:"Koreksi penghasilan"},LEAVE_GRANT:{days:"12",leaveType:"ANNUAL",sourceKey:"entitlement-employee-year",reason:"Hak cuti disetujui"}},null,2)}</pre></details>
+                <p role="alert">{sourceError}</p><Button type="submit" disabled={mutation.isPending}>Ajukan sumber ke checker</Button>
+              </form>
+              {data.sources.length===0 && <p>Belum ada sumber.</p>}
+              {data.sources.map(s=><div key={s.id} className="border-t py-2"><span>{s.id} · {s.kind} · {s.employeeId} · {formatDateId(s.workDate)} · {s.status}</span><pre className="overflow-auto text-xs">{JSON.stringify(s.payload,null,2)}</pre>{s.status==="PENDING_APPROVAL" && <Button disabled={mutation.isPending} onClick={()=>mutation.mutate({action:"approve_source",id:s.id})}>Checker: setujui sumber</Button>}</div>)}
+              <form className="mt-4 space-y-2" onSubmit={e=>{e.preventDefault();const v=formToObject(e.currentTarget);mutation.mutate({action:"leave_balance",...v},{onSuccess:(result:unknown)=>setBalance(String((result as {balance:string}).balance))});}}>
+                <Field label="Karyawan saldo/akrual"><Select name="employeeId" required>{data.employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
+                <Field label="Jenis cuti"><Input name="leaveType" defaultValue="ANNUAL" required /></Field>
+                <Field label="Saldo per tanggal"><Input name="asOf" type="date" required /></Field>
+                <Button type="submit" disabled={mutation.isPending}>Lihat saldo ledger</Button><output className="ml-2">{balance}</output>
+                <Field label="Bulan akrual (tanggal 1 UTC)"><Input name="workDate" type="date" /></Field>
+                <Button type="button" disabled={mutation.isPending} onClick={e=>{const form=e.currentTarget.closest("form");if(form)mutation.mutate({action:"accrue_leave",...formToObject(form)});}}>Catat akrual sesuai policy approved</Button>
+              </form>
+              <form className="mt-4 space-y-2" onSubmit={e=>{e.preventDefault();mutation.mutate({action:"end_employment",...formToObject(e.currentTarget)});}}>
+                <Field label="Karyawan offboarding"><Select name="employeeId" required>{data.employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
+                <Field label="Tanggal terakhir bekerja"><Input type="date" name="endDate" required /></Field>
+                <Field label="Alasan offboarding"><Input name="reason" required /></Field>
+                <Button type="submit" disabled={mutation.isPending}>Tetapkan akhir kerja (tidak dapat diedit)</Button>
+              </form>
+            </Card>}
 
             {formMode === "employee" ? (
               <Card title="Tambah karyawan">
@@ -198,6 +228,7 @@ export function HrClient() {
                     type="number"
                     defaultValue="0"
                   />
+                  <Field label="Tanggal bergabung"><Input type="date" name="joinDate" required /></Field>
                   <AppCheckbox name="isActive" defaultSelected>
                     Aktif
                   </AppCheckbox>

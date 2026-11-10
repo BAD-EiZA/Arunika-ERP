@@ -44,6 +44,15 @@ export async function GET() {
           supply: l.supply.toString(),
           isConverted: l.isConverted,
           sourceRef: l.sourceRef,
+          decision: l.decision,
+          releaseDate: l.releaseDate?.toISOString() ?? null,
+          dueDate: l.dueDate?.toISOString() ?? null,
+          exceptionMessage: [
+            l.sourceRef?.includes(";LATE_SUPPLY")
+              ? "Pasokan terjadwal setelah kebutuhan; tinjau percepatan sebelum membuat order baru." : null,
+            l.sourceRef?.includes(";UNCONFIRMED_SUPPLY")
+              ? "Pasokan terbuka tanpa tanggal pasti; konfirmasi jadwal sebelum membuat order baru." : null,
+          ].filter(Boolean).join(" ") || null,
         })),
       })),
     };
@@ -56,6 +65,7 @@ export async function POST(req: Request) {
     const body = (await req.json()) as {
       horizonDays?: number;
       notes?: string;
+      planning?: unknown;
     };
     await assertRequestAccess(ctx, body);
     const run = await runMrp({
@@ -63,6 +73,7 @@ export async function POST(req: Request) {
       userId: ctx.user.id,
       horizonDays: body.horizonDays,
       notes: body.notes,
+      planning: body.planning,
     });
     return {
       mrpRun: {

@@ -51,9 +51,9 @@ import {
   runStraightLineDepreciation,
 } from "@/server/services/treasury";
 import {
-  correctTaxDocument,
-  createTaxDocument,
-  exportTaxPeriod,
+  correctManagedTaxDocument,
+  createManagedTaxDocument,
+  createOfflineTaxExport,
 } from "@/server/services/tax";
 import { postStockMovement } from "@/server/services/inventory";
 import { postJournal } from "@/server/services/accounting";
@@ -651,16 +651,19 @@ export async function actionClosePeriod(formData: FormData) {
 export async function actionCreateTaxDoc(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("tax_document:create");
-    const doc = await createTaxDocument({
+    const doc = await createManagedTaxDocument({
       companyId: ctx.companyId,
+      actorId: ctx.user.id,
       docType: formStr(formData, "docType") || "FAKTUR_KELUARAN",
       taxType: (formStr(formData, "taxType") || "PPN") as "PPN",
       partnerName: formStr(formData, "partnerName") || undefined,
       partnerNpwp: formStr(formData, "partnerNpwp") || undefined,
       dpp: formNum(formData, "dpp"),
-      taxAmount: formNum(formData, "taxAmount"),
-      taxPeriod: formStr(formData, "taxPeriod") || undefined,
-      notes: formStr(formData, "notes") || undefined,
+      taxPeriod: formStr(formData, "taxPeriod"),
+      taxCode: formStr(formData, "taxCode"),
+      documentDate: new Date(formStr(formData, "documentDate")),
+      sourceDocType: formStr(formData, "sourceDocType"),
+      sourceDocId: formStr(formData, "sourceDocId"),
     });
     revalidatePath("/tax/documents");
     return doc;
@@ -671,12 +674,13 @@ export async function actionCorrectTaxDoc(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("tax_document:correct");
     await assertResourceAccess(ctx, "taxDocument", formStr(formData, "id"));
-    const doc = await correctTaxDocument({
-      companyId: ctx.companyId,
+    const doc = await correctManagedTaxDocument({
+          companyId: ctx.companyId,
+          actorId: ctx.user.id,
       taxDocumentId: formStr(formData, "id"),
       dpp: formNum(formData, "dpp"),
       taxAmount: formNum(formData, "taxAmount"),
-      notes: formStr(formData, "notes") || undefined,
+      reason: formStr(formData, "notes"),
     });
     revalidatePath("/tax/documents");
     return doc;
@@ -686,7 +690,7 @@ export async function actionCorrectTaxDoc(formData: FormData) {
 export async function actionExportTax(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("tax_export:generate");
-    return exportTaxPeriod(ctx.companyId, formStr(formData, "taxPeriod"));
+    return createOfflineTaxExport(ctx.companyId, formStr(formData, "taxPeriod"), ctx.user.id);
   });
 }
 

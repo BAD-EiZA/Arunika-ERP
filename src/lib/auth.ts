@@ -61,13 +61,11 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     const kindeUser = await getUser();
     if (!kindeUser?.id || !kindeUser.email) return null;
 
-    let user = await prisma.user.findFirst({
-      where: {
-        OR: [{ kindeUserId: kindeUser.id }, { email: kindeUser.email }],
-      },
-    });
+    let user = await prisma.user.findUnique({ where: { kindeUserId: kindeUser.id } });
 
     if (!user) {
+      // An unbound email is not proof of ownership; require a separate invitation/verified-email claim flow.
+      if (await prisma.user.findUnique({ where: { email: kindeUser.email } })) return null;
       user = await prisma.user.create({
         data: {
           kindeUserId: kindeUser.id,
@@ -78,15 +76,6 @@ export async function getSessionUser(): Promise<SessionUser | null> {
               .join(" ") || kindeUser.email,
           avatarUrl: kindeUser.picture ?? null,
           lastLoginAt: new Date(),
-        },
-      });
-    } else if (!user.kindeUserId) {
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          kindeUserId: kindeUser.id,
-          lastLoginAt: new Date(),
-          avatarUrl: kindeUser.picture ?? user.avatarUrl,
         },
       });
     }
@@ -102,6 +91,19 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   } catch {
     return null;
   }
+}
+
+// Only the explicit invitation endpoint may bind an unclaimed account.
+export async function requireInvitationIdentity(): Promise<{ kindeUserId: string; email: string }> {
+  const { getKindeServerSession } = await import("@kinde-oss/kinde-auth-nextjs/server");
+  const session = getKindeServerSession();
+  if (!(await session.isAuthenticated())) throw unauthorized();
+  const identity = await session.getUser();
+  const claims = await session.getIdToken();
+  if (!identity?.id || !identity.email || claims?.sub !== identity.id || claims.email_verified !== true || claims.email?.toLowerCase() !== identity.email.toLowerCase()) {
+    throw unauthorized("Email Kinde harus terverifikasi");
+  }
+  return { kindeUserId: identity.id, email: identity.email.toLowerCase() };
 }
 
 export async function requireUser(): Promise<SessionUser> {
@@ -154,11 +156,11 @@ export async function getTenantContext(
     ? memberships.find((m) => m.companyId === activeCompanyId)
     : memberships[0];
 
-  if (!membership?.company.isActive) return null;
+  if (!membership?.company.isActive || !membership.role.isActive) return null;
 
   let permissions: Set<string> | "*";
-  const roleMap = ROLE_PERMISSIONS[membership.role.code];
-  if (roleMap === "*" || membership.role.code === "OWNER") {
+  const roleMap = membership.role.isSystem ? ROLE_PERMISSIONS[membership.role.code] : undefined;
+  if (roleMap === "*") {
     permissions = "*";
   } else if (roleMap) {
     permissions = new Set(roleMap);

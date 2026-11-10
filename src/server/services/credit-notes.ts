@@ -14,12 +14,13 @@ export async function createCreditNoteFromReturn(input: { companyId: string; use
   if (salesReturn.status !== "POSTED") throw conflict("Sales return harus POSTED dulu");
   // Exclusive source settlement: a return already settled by refund or replacement must not also issue a CN.
   if (salesReturn.refundedAt) throw conflict("Refund sudah diposting untuk return ini");
-  if (salesReturn.replacementDeliveryId) throw conflict("Replacement sudah ada untuk return ini");
+  if (salesReturn.replacementDeliveryId || salesReturn.settlementStatus === "REPLACED") throw conflict("Replacement sudah ada untuk return ini");
 
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`return:sales:${salesReturn.id}`}, 0))`;
     const current = await tx.salesReturn.findFirst({ where: { id: salesReturn.id, companyId: input.companyId } });
-    if (!current || current.refundedAt || current.replacementDeliveryId) throw conflict("Return sudah diselesaikan via refund/replacement");
+    const replacement = await tx.returnReplacement.findUnique({ where: { salesReturnId: salesReturn.id } });
+    if (!current || current.status !== "POSTED" || current.refundedAt || current.replacementDeliveryId || current.settlementStatus === "REPLACED" || replacement) throw conflict("Return sudah diselesaikan via refund/replacement");
     const existing = await tx.creditNote.findUnique({ where: { companyId_salesReturnId: { companyId: input.companyId, salesReturnId: salesReturn.id } } });
     if (existing) return existing;
     const number = await nextDocumentNumber(tx, input.companyId, "CN");

@@ -1,8 +1,9 @@
 import { prisma } from "@/lib/db";
-import { conflict, notFound, validationError } from "@/lib/errors";
+import { AppError, conflict, notFound, validationError } from "@/lib/errors";
 import { money, qty, toPrismaMoney, toPrismaDecimal } from "@/lib/money";
 import { nextDocumentNumber } from "@/lib/document-number";
-import { postFromRule } from "@/server/services/accounting";
+import { postFromRule, postJournal } from "@/server/services/accounting";
+import type { Prisma } from "@/generated/prisma/client";
 import { createHash } from "node:crypto";
 
 export async function createProject(input: {
@@ -151,25 +152,50 @@ export async function addProjectExpense(input: {
   if (project.status === "CLOSED") throw conflict("Project sudah ditutup");
 
   const amount = money(input.amount);
-  if (amount.lte(0)) throw validationError("Nilai biaya harus > 0");
+  if (!amount.isFinite() || amount.lte(0) || amount.decimalPlaces() > 2) throw validationError("Nilai biaya harus > 0 dan maksimal 2 desimal");
+  if (!input.description?.trim()) throw validationError("Deskripsi biaya wajib");
   const expense = await prisma.projectExpense.create({
     data: {
       projectId: input.projectId,
-      description: input.description,
+      description: input.description.trim(),
       amount: toPrismaMoney(amount),
       expenseDate: input.expenseDate ?? new Date(),
-      status: "POSTED",
-    },
-  });
-
-  await prisma.project.update({
-    where: { id: project.id },
-    data: {
-      actualCost: toPrismaMoney(money(project.actualCost).plus(amount)),
+      // No debit/credit accounts or settlement source supplied: never imply GL posting.
+      status: "DRAFT",
     },
   });
 
   return expense;
+}
+
+type ProjectActor = { companyId: string; userId: string; id: string };
+
+export async function approveProjectExpense(input: ProjectActor & { debitAccountCode: string; creditAccountCode: string }) {
+  if (!input.debitAccountCode?.trim() || !input.creditAccountCode?.trim() || input.debitAccountCode === input.creditAccountCode) throw validationError("Dua akun biaya dan penyelesaian berbeda wajib");
+  return prisma.$transaction(async (tx) => {
+    const expense = await tx.projectExpense.findFirst({ where: { id: input.id, project: { companyId: input.companyId } }, include: { project: true } });
+    if (!expense) throw notFound("Expense tidak ditemukan");
+    if (expense.status !== "DRAFT" || expense.project.status === "CLOSED") throw conflict("Expense tidak dapat disetujui");
+    const accounts = await tx.account.findMany({ where: { companyId: input.companyId, code: { in: [input.debitAccountCode, input.creditAccountCode] }, isActive: true } });
+    if (!accounts.some((a) => a.code === input.debitAccountCode && ["EXPENSE", "COGS", "OTHER_EXPENSE"].includes(a.type)) || !accounts.some((a) => a.code === input.creditAccountCode && ["ASSET", "LIABILITY"].includes(a.type))) throw validationError("Akun biaya/penyelesaian tidak valid");
+    const result = await tx.projectExpense.updateMany({ where: { id: input.id, status: "DRAFT", project: { companyId: input.companyId, status: { not: "CLOSED" } } }, data: { status: "APPROVED", debitAccountCode: input.debitAccountCode, creditAccountCode: input.creditAccountCode, approvedById: input.userId, approvedAt: new Date() } });
+    if (result.count !== 1) throw conflict("Expense sudah berubah");
+    return { id: input.id, status: "APPROVED" as const };
+  }, { isolationLevel: "Serializable" });
+}
+
+export async function postProjectExpense(input: ProjectActor) {
+  return prisma.$transaction(async (tx) => {
+    const expense = await tx.projectExpense.findFirst({ where: { id: input.id, project: { companyId: input.companyId } }, include: { project: true } });
+    if (!expense) throw notFound("Expense tidak ditemukan");
+    if (expense.status !== "APPROVED" || expense.project.status === "CLOSED" || !expense.debitAccountCode || !expense.creditAccountCode) throw conflict("Expense belum disetujui atau project ditutup");
+    const accounts = await tx.account.findMany({ where: { companyId: input.companyId, code: { in: [expense.debitAccountCode, expense.creditAccountCode] }, isActive: true } });
+    if (!accounts.some((a) => a.code === expense.debitAccountCode && ["EXPENSE", "COGS", "OTHER_EXPENSE"].includes(a.type)) || !accounts.some((a) => a.code === expense.creditAccountCode && ["ASSET", "LIABILITY"].includes(a.type))) throw validationError("Akun tidak aktif/tidak valid");
+    const journal = await postJournal(tx, { companyId: input.companyId, sourceModule: "projects", sourceDocType: "ProjectExpense", sourceDocId: expense.id, description: expense.description, postingDate: expense.expenseDate, idempotencyKey: `project-expense:${expense.id}`, postedById: input.userId, lines: [{ accountCode: expense.debitAccountCode, debit: expense.amount.toString() }, { accountCode: expense.creditAccountCode, credit: expense.amount.toString() }] });
+    const result = await tx.projectExpense.updateMany({ where: { id: expense.id, status: "APPROVED", journalId: null, project: { companyId: input.companyId, status: { not: "CLOSED" } } }, data: { status: "POSTED", journalId: journal.id } });
+    if (result.count !== 1) throw conflict("Expense sudah diposting");
+    return { id: expense.id, status: "POSTED" as const, journalId: journal.id };
+  }, { isolationLevel: "Serializable" });
 }
 
 export async function billProjectSource(input: { companyId: string; userId: string; projectId: string; sourceType: "task" | "timesheet"; sourceId: string; hourlyRate?: string | number; idempotencyKey: string }) {
@@ -214,6 +240,55 @@ export async function billProjectSource(input: { companyId: string; userId: stri
   }, { isolationLevel: "Serializable" });
 }
 
+type CostKind = "PAYROLL" | "MATERIAL";
+const sourceInclude = { account: true, journal: { include: { lines: { include: { account: true } }, reversals: { where: { status: "POSTED" as const } } } } } as const;
+
+async function verifiedCostSource(tx: Prisma.TransactionClient, companyId: string, journalLineId: string, kind: CostKind) {
+  const line = await tx.journalLine.findFirst({ where: { id: journalLineId, journal: { companyId } }, include: sourceInclude });
+  if (!line) throw notFound("Baris jurnal tidak ditemukan");
+  const j = line.journal;
+  const amount = money(line.debit);
+  const expenseLines = j.lines.filter((l) => l.account && ["EXPENSE", "COGS", "OTHER_EXPENSE"].includes(l.account.type));
+  if (j.companyId !== companyId || line.account.companyId !== companyId || j.status !== "POSTED" || j.reversalOfId || j.reversals.length || j.currency !== "IDR" || !money(j.exchangeRate).eq(1) || !["EXPENSE", "COGS", "OTHER_EXPENSE"].includes(line.account.type) || !amount.isFinite() || amount.lte(0) || !money(line.credit).eq(0) || !j.lines.reduce((n, l) => n.plus(money(l.debit)), money(0)).eq(j.lines.reduce((n, l) => n.plus(money(l.credit)), money(0)))) throw conflict("Sumber biaya bukan jurnal biaya POSTED IDR yang seimbang dan belum dibalik");
+  if (kind === "PAYROLL") {
+    if (j.sourceDocType !== "payroll_run" || !j.sourceDocId) throw conflict("Sumber bukan payroll");
+    const run = await tx.payrollRun.findFirst({ where: { id: j.sourceDocId, companyId, status: "POSTED" } });
+    const expense = expenseLines.reduce((n, l) => n.plus(money(l.debit).minus(l.credit)), money(0));
+    if (!run || !expense.eq(money(run.totalGross).plus(money(run.totalEmployerBpjs)))) throw conflict("Biaya payroll tidak cocok dengan run POSTED");
+  } else {
+    if (j.sourceDocType !== "DeliveryOrder" || !j.sourceDocId || line.account.type !== "COGS") throw conflict("Sumber bukan pemakaian material/COGS delivery");
+    const delivery = await tx.deliveryOrder.findFirst({ where: { id: j.sourceDocId, companyId, status: "POSTED" } });
+    const movements = await tx.stockMovement.findMany({ where: { companyId, referenceType: "DeliveryOrder", referenceId: j.sourceDocId, type: "SALES_DELIVERY" } });
+    const stockCost = movements.reduce((n, m) => n.plus(money(m.totalCost).abs()), money(0));
+    const cost = expenseLines.reduce((n, l) => n.plus(money(l.debit).minus(l.credit)), money(0));
+    if (!delivery || !movements.length || !stockCost.eq(cost)) throw conflict("COGS tidak cocok dengan mutasi material");
+  }
+  return { line, amount };
+}
+
+export async function allocateProjectCost(input: { companyId: string; userId: string; projectId: string; journalLineId: string; kind: CostKind }) {
+  if (!["PAYROLL", "MATERIAL"].includes(input.kind) || !input.journalLineId) throw validationError("Jenis/sumber alokasi wajib");
+  return prisma.$transaction(async (tx) => {
+    const project = await tx.project.findFirst({ where: { id: input.projectId, companyId: input.companyId } });
+    if (!project) throw notFound("Project tidak ditemukan");
+    if (project.status === "CLOSED") throw conflict("Project ditutup");
+    if (await tx.projectCostAllocation.findUnique({ where: { journalLineId: input.journalLineId } })) throw conflict("Sumber pernah dialokasikan; tidak dapat digunakan ulang");
+    const { amount } = await verifiedCostSource(tx, input.companyId, input.journalLineId, input.kind);
+    return tx.projectCostAllocation.create({ data: { companyId: input.companyId, projectId: project.id, journalLineId: input.journalLineId, kind: input.kind, amount: amount.toFixed(2), status: "POSTED", createdById: input.userId } });
+  }, { isolationLevel: "Serializable" });
+}
+
+export async function reverseProjectAllocation(input: ProjectActor & { reason: string }) {
+  if (!input.reason?.trim()) throw validationError("Alasan pembalikan wajib");
+  return prisma.$transaction(async (tx) => {
+    const allocation = await tx.projectCostAllocation.findFirst({ where: { id: input.id, companyId: input.companyId, project: { companyId: input.companyId } } });
+    if (!allocation) throw notFound("Alokasi tidak ditemukan");
+    const result = await tx.projectCostAllocation.updateMany({ where: { id: allocation.id, companyId: input.companyId, status: "POSTED" }, data: { status: "VOID", reversedAt: new Date(), reversedById: input.userId, reversalReason: input.reason.trim() } });
+    if (result.count !== 1) throw conflict("Alokasi sudah dibalik");
+    return { id: allocation.id, status: "VOID" as const };
+  }, { isolationLevel: "Serializable" });
+}
+
 export async function getProjectProfitability(
   companyId: string,
   projectId: string,
@@ -224,6 +299,7 @@ export async function getProjectProfitability(
       tasks: true,
       timesheets: true,
       expenses: true,
+      costAllocations: true,
     },
   });
   if (!project) throw notFound("Project tidak ditemukan");
@@ -231,15 +307,45 @@ export async function getProjectProfitability(
   const hours = project.timesheets
     .filter((t) => t.status === "APPROVED" || t.status === "POSTED")
     .reduce((acc, t) => acc.plus(money(t.hours)), money(0));
-  const laborCost = hours.mul(75000);
-  const expenseCost = project.expenses.reduce(
-    (acc, e) => acc.plus(money(e.amount)),
-    money(0),
-  );
-  const actual = laborCost.plus(expenseCost);
+  // No project-level posted payroll allocation exists; hours are not a cost basis.
+  const laborCost = project.timesheets.length ? null : money(0);
+  const postedExpenses = project.expenses.filter((e) => e.status === "POSTED");
+  const journals = postedExpenses.length ? await prisma.journal.findMany({
+    where: { companyId, sourceDocType: "ProjectExpense", sourceDocId: { in: postedExpenses.map((e) => e.id) }, status: "POSTED", reversalOfId: null, reversals: { none: { status: "POSTED" } } },
+    include: { lines: { include: { account: true } } },
+  }) : [];
+  const verified = new Map<string, ReturnType<typeof money>>();
+  for (const e of postedExpenses) {
+    const entries = journals.filter((j) => j.sourceDocId === e.id);
+    if (entries.length !== 1 || entries[0].currency !== "IDR" || !money(entries[0].exchangeRate).eq(1)) continue;
+    const lines = entries[0].lines;
+    const debit = lines.reduce((sum, line) => sum.plus(money(line.debit)), money(0));
+    const credit = lines.reduce((sum, line) => sum.plus(money(line.credit)), money(0));
+    const cost = lines.filter((line) => ["EXPENSE", "COGS", "OTHER_EXPENSE"].includes(line.account.type))
+      .reduce((sum, line) => sum.plus(money(line.debit).minus(money(line.credit))), money(0));
+    if (debit.eq(credit) && cost.eq(money(e.amount))) verified.set(e.id, cost);
+  }
+  const expenseCost = [...verified.values()].reduce((sum, cost) => sum.plus(cost), money(0));
+  const unverifiedExpenseCount = project.expenses.filter((e) => e.status !== "CANCELLED" && e.status !== "VOID" && !verified.has(e.id)).length;
+  let allocatedLabor = money(0), materialCost = money(0), invalidAllocationCount = 0;
+  for (const allocation of project.costAllocations ?? []) {
+    if (allocation.status !== "POSTED") continue;
+    try {
+      if (allocation.kind !== "PAYROLL" && allocation.kind !== "MATERIAL") throw conflict("Jenis alokasi tidak valid");
+      const { amount } = await verifiedCostSource(prisma, companyId, allocation.journalLineId, allocation.kind);
+      if (!amount.eq(money(allocation.amount))) throw conflict("Nilai sumber berubah");
+      if (allocation.kind === "PAYROLL") allocatedLabor = allocatedLabor.plus(amount);
+      else materialCost = materialCost.plus(amount);
+    } catch (error) {
+      if (!(error instanceof AppError) || ![404, 409].includes(error.status)) throw error;
+      invalidAllocationCount++;
+    }
+  }
+  const knownCost = expenseCost.plus(allocatedLabor).plus(materialCost);
+  // ponytail: whole-source attribution only; complete coverage needs employee-period/material demand links.
+  const actual = laborCost === null || unverifiedExpenseCount || invalidAllocationCount || (project.costAllocations?.length ?? 0) > 0 ? null : expenseCost;
   const budget = money(project.budgetAmount);
   const billed = money(project.billedAmount);
-  const margin = billed.minus(actual);
 
   return {
     project: {
@@ -249,12 +355,21 @@ export async function getProjectProfitability(
       status: project.status,
     },
     budget: budget.toFixed(2),
-    actualCost: actual.toFixed(2),
-    laborCost: laborCost.toFixed(2),
+    actualCost: actual?.toFixed(2) ?? null,
+    knownCost: knownCost.toFixed(2),
+    allocatedLaborCost: allocatedLabor.toFixed(2),
+    materialCost: materialCost.toFixed(2),
+    invalidAllocationCount,
+    coverage: "PARTIAL",
+    recordedMargin: billed.minus(knownCost).toFixed(2),
+    costStatus: actual === null ? "UNKNOWN" : "KNOWN",
+    unverifiedExpenseCount,
+    costNote: "Biaya hanya dari jurnal biaya project POSTED yang cocok, belum dibalik, IDR. Alokasi payroll/material seluruh baris sumber terverifikasi tersedia; cakupan biaya belum lengkap. Margin sumber tercatat bukan laba bersih lengkap.",
+    laborCost: laborCost?.toFixed(2) ?? null,
     expenseCost: expenseCost.toFixed(2),
     billedAmount: billed.toFixed(2),
-    margin: margin.toFixed(2),
-    variance: budget.minus(actual).toFixed(2),
+    margin: actual === null ? null : billed.minus(actual).toFixed(2),
+    variance: actual === null ? null : budget.minus(actual).toFixed(2),
     approvedHours: hours.toFixed(2),
   };
 }

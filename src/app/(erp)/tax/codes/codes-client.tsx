@@ -133,8 +133,9 @@ export function TaxCodesClient() {
                 }}
               >
                 <FormGrid>
+                  <Field label="Mulai berlaku"><Input name="effectiveFrom" type="date" required /></Field>
                   <Field label="NPWP">
-                    <Input name="npwp" defaultValue={reg?.npwp || ""} />
+                    <Input name="npwp" required placeholder="Masukkan identifier lengkap untuk versi baru" />
                   </Field>
                   <Field label="KPP">
                     <Input
@@ -215,9 +216,11 @@ export function TaxCodesClient() {
                       name="rate"
                       type="number"
                       step="0.01"
-                      defaultValue="11"
+                      required
                     />
                   </Field>
+                  <Field label="Mulai berlaku"><Input name="effectiveFrom" type="date" required /></Field>
+                  <Field label="Referensi legal"><Input name="legalReference" required /></Field>
                   <Field label="GL akun">
                     <Input name="glAccountCode" defaultValue="2120" />
                   </Field>

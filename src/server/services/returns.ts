@@ -244,11 +244,60 @@ export async function refundSalesReturn(input: ReturnAction & { bankAccountId: s
   }, { isolationLevel: "Serializable" });
 }
 
-export async function replaceSalesReturn(input: ReturnAction & { targetWarehouseId: string }) {
+export async function replaceSalesReturn(input: ReturnAction & { targetWarehouseId: string; idempotencyKey?: string }) {
+  const requestHash = hash({ companyId: input.companyId, id: input.id, targetWarehouseId: input.targetWarehouseId });
   return prisma.$transaction(async tx => {
-    await postedReturn(tx, input);
-    // ponytail: replacement is disabled until dedicated inventory/COGS posting avoids original SO fulfillment.
-    throw conflict("Replacement belum tersedia. Gunakan credit note/refund; jangan buat delivery dari SO sumber.");
+    const doc = await postedReturn(tx, input);
+    if (!input.targetWarehouseId?.trim() || !input.idempotencyKey?.trim() || input.idempotencyKey.length > 200) throw validationError("Gudang dan idempotencyKey replacement wajib; DeliveryOrder.salesOrderId wajib; replacement tidak boleh memakai fulfillment SO sumber");
+    await lock(tx, `return:replacement:${input.companyId}:${input.idempotencyKey}`);
+    const existing = await tx.returnReplacement.findUnique({ where: { companyId_idempotencyKey: { companyId: input.companyId, idempotencyKey: input.idempotencyKey! } }, include: { items: true } });
+    if (existing) {
+      if (existing.requestHash !== requestHash || existing.status !== "POSTED") throw conflict("Idempotency replacement berbeda atau belum posted");
+      return existing;
+    }
+    if (doc.replacementDeliveryId || await tx.returnReplacement.findUnique({ where: { salesReturnId: doc.id } })) throw conflict("Replacement sudah ada");
+    if (doc.refundedAt || doc.settlementStatus !== "DRAFT" || await tx.creditNote.findFirst({ where: { companyId: input.companyId, salesReturnId: doc.id, status: { notIn: ["CANCELLED", "VOID", "REJECTED"] } } })) throw conflict("Settlement/CN/refund tidak boleh digabung replacement");
+    const source = await tx.warehouse.findFirst({ where: { id: doc.warehouseId ?? "", companyId: input.companyId } });
+    const target = await tx.warehouse.findFirst({ where: { id: input.targetWarehouseId, companyId: input.companyId, isActive: true, type: "MAIN" } });
+    if (!source || !target || !target.isActive || target.type !== "MAIN" || source.branchId !== target.branchId || !["RETURN", "DAMAGED"].includes(source.type)) throw validationError("Gudang replacement utama aktif satu cabang wajib");
+    const now = new Date();
+    const rules = await tx.postingRule.findMany({ where: { companyId: input.companyId, sourceEvent: "return_replacement.post", isActive: true }, include: { versions: { where: { effectiveFrom: { lte: now }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }] } } } });
+    if (rules.length !== 1 || rules[0].versions.length !== 1) throw conflict("Posting rule replacement aktif tidak ambigu wajib");
+    const version = rules[0].versions[0];
+    const config = version.config as { lines?: { side?: string; accountCode?: string }[] } | null;
+    const lines = config?.lines;
+    if (!config || Object.keys(config).length !== 1 || !Array.isArray(lines) || lines.length !== 2 || lines.some(l => !l || Object.keys(l).sort().join() !== "accountCode,side" || typeof l.accountCode !== "string" || !l.accountCode.trim()) || lines.filter(l => l.side === "DEBIT").length !== 1 || lines.filter(l => l.side === "CREDIT").length !== 1) throw conflict("Konfigurasi posting replacement tidak valid");
+    const debit = lines.find(l => l.side === "DEBIT")!.accountCode!;
+    const credit = lines.find(l => l.side === "CREDIT")!.accountCode!;
+    const accounts = await tx.account.findMany({ where: { companyId: input.companyId, isActive: true, code: { in: [debit, credit] } } });
+    if (debit === credit || accounts.length !== 2 || !accounts.some(a => a.code === debit && a.isActive && a.type === "COGS") || !accounts.some(a => a.code === credit && a.isActive && a.type === "ASSET")) throw conflict("COA replacement COGS/inventory tidak valid");
+    const invoice = await tx.salesInvoice.findFirst({ where: { id: doc.salesInvoiceId ?? "", companyId: input.companyId, customerId: doc.customerId } });
+    if (!invoice?.deliveryOrderId) throw conflict("Invoice delivery sumber wajib");
+    const items = [];
+    for (const item of [...doc.items].sort((a, b) => a.productId.localeCompare(b.productId))) {
+      if (!item.sourceItemId || !item.sourceMovementId || !qty(item.quantity).isFinite() || qty(item.quantity).lte(0)) throw conflict("Sumber kuantitas replacement wajib");
+      await lock(tx, `return:sales:${item.sourceItemId}`);
+      await lock(tx, `return:sales:movement:${item.sourceMovementId}`);
+      const original = await tx.salesInvoiceItem.findFirst({ where: { id: item.sourceItemId, invoiceId: doc.salesInvoiceId!, productId: item.productId } });
+      const movement = await tx.stockMovement.findFirst({ where: { id: item.sourceMovementId, companyId: input.companyId, productId: item.productId, type: "SALES_DELIVERY", referenceType: "DeliveryOrder", referenceId: invoice.deliveryOrderId } });
+      for (const [field, ceiling] of [["sourceItemId", original?.quantity], ["sourceMovementId", movement?.quantity]] as const) {
+        const prior = await tx.salesReturnItem.findMany({ where: { [field]: item[field], salesReturn: { companyId: input.companyId, status: { notIn: ["CANCELLED", "VOID", "REJECTED"] } } } });
+        if (ceiling == null || qty(item.quantity).gt(qty(ceiling)) || sumMoney(prior.map(i => i.quantity)).gt(qty(ceiling))) throw conflict("Qty replacement melebihi sumber");
+      }
+      await lock(tx, `${target.id}:${item.productId}`);
+      const balance = await tx.stockBalance.findUnique({ where: { warehouseId_productId: { warehouseId: target.id, productId: item.productId } } });
+      if (!balance || qty(balance.quantityOnHand).minus(qty(balance.quantityReserved)).lt(qty(item.quantity)) || !money(balance.averageCost).isFinite() || money(balance.averageCost).lt(0)) throw conflict("Stok/valuasi replacement tidak cukup atau tidak valid");
+      items.push({ sourceReturnItemId: item.id, productId: item.productId, quantity: toPrismaDecimal(qty(item.quantity)), unitCost: toPrismaMoney(money(balance.averageCost)) });
+    }
+    const replacement = await tx.returnReplacement.create({ data: { companyId: input.companyId, salesReturnId: doc.id, warehouseId: target.id, number: await nextDocumentNumber(tx, input.companyId, "RPL"), idempotencyKey: input.idempotencyKey!, requestHash, status: "DRAFT", postingRuleVersionId: version.id, createdById: input.userId, items: { create: items } }, include: { items: true } });
+    let cost = money(0);
+    for (const item of replacement.items) {
+      const movement = await postStockMovement(tx, { companyId: input.companyId, warehouseId: target.id, productId: item.productId, type: "SALES_DELIVERY", quantity: item.quantity.toString(), unitCost: item.unitCost.toString(), referenceType: "ReturnReplacement", referenceId: replacement.id, referenceNumber: replacement.number, idempotencyKey: `return:replacement:${item.id}`, createdById: input.userId });
+      cost = cost.plus(money(movement.totalCost).toDecimalPlaces(2));
+    }
+    if (cost.gt(0)) await postJournal(tx, { companyId: input.companyId, sourceModule: "returns", sourceDocType: "ReturnReplacement", sourceDocId: replacement.id, description: `Replacement ${replacement.number}`, idempotencyKey: `je:return:replacement:${replacement.id}`, postedById: input.userId, lines: [{ accountCode: debit, debit: toPrismaMoney(cost) }, { accountCode: credit, credit: toPrismaMoney(cost) }] });
+    await tx.salesReturn.update({ where: { id: doc.id }, data: { settlementStatus: "REPLACED" } });
+    return tx.returnReplacement.update({ where: { id: replacement.id }, data: { status: "POSTED", postedAt: new Date() }, include: { items: true } });
   }, { isolationLevel: "Serializable" });
 }
 

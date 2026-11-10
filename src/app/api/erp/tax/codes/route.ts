@@ -1,7 +1,7 @@
 import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
-import { createTaxCode } from "@/server/services/tax";
+import { createTaxRuleVersion, saveTaxProfile } from "@/server/services/tax";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +33,7 @@ export async function GET() {
       registration: registration
         ? {
             id: registration.id,
-            npwp: registration.npwp,
+            npwp: registration.npwp ? `***${registration.npwp.slice(-4)}` : null,
             isPkp: registration.isPkp,
             pkpDate: registration.pkpDate?.toISOString() ?? null,
             taxOffice: registration.taxOffice,
@@ -54,6 +54,9 @@ export async function POST(req: Request) {
       direction?: string;
       rate?: string | number;
       glAccountCode?: string;
+      effectiveFrom?: string;
+      effectiveTo?: string;
+      legalReference?: string;
       npwp?: string;
       isPkp?: boolean;
       pkpDate?: string;
@@ -62,25 +65,27 @@ export async function POST(req: Request) {
     await assertRequestAccess(ctx, body);
 
     if (body.action === "registration") {
-      const { upsertTaxRegistration } = await import("@/server/services/tax");
-      const reg = await upsertTaxRegistration({
-        companyId: ctx.companyId,
-        npwp: body.npwp,
+      const reg = await saveTaxProfile({
+        companyId: ctx.companyId, actorId: ctx.user.id,
+        npwp: String(body.npwp ?? ""),
         isPkp: body.isPkp,
-        pkpDate: body.pkpDate ? new Date(body.pkpDate) : undefined,
+        effectiveFrom: new Date(body.effectiveFrom ?? ""),
         taxOffice: body.taxOffice,
       });
       return { registration: { id: reg.id, npwp: reg.npwp, isPkp: reg.isPkp } };
     }
 
     const dir = body.direction === "INPUT" || body.direction === "WITHHOLDING" ? body.direction : "OUTPUT";
-    const code = await createTaxCode({
+    const code = await createTaxRuleVersion({
       companyId: ctx.companyId,
       code: String(body.code ?? ""),
       name: String(body.name ?? ""),
       taxType: body.taxType || "PPN",
       direction: dir,
-      rate: body.rate ?? 11,
+      rate: String(body.rate ?? ""),
+      effectiveFrom: new Date(body.effectiveFrom ?? ""),
+      effectiveTo: body.effectiveTo ? new Date(body.effectiveTo) : undefined,
+      legalReference: String(body.legalReference ?? ""),
       glAccountCode: body.glAccountCode,
     });
     return { code: { id: code.id, code: code.code } };

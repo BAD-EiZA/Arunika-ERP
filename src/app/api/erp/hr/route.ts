@@ -6,7 +6,7 @@ import {
   approveLeaveRequest,
   createEmployee,
   createLeaveRequest,
-  recordAttendance,
+  recordAttendance, createHrPayrollSource, approveHrPayrollSource, getLeaveBalance, accrueLeave, endEmployment,
 } from "@/server/services/hr";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +32,9 @@ export async function GET() {
         take: 30,
       }),
     ]);
+    const canManageSources = hasPermission(ctx.permissions, "payroll:prepare") && hasPermission(ctx.permissions, "employee_sensitive:view");
     return {
+      ...(canManageSources ? { sources: await prisma.hrPayrollSource.findMany({where:{companyId:ctx.companyId},orderBy:{createdAt:"desc"},take:50}) } : {}),
       employees: employees.map((e) => ({
         id: e.id,
         code: e.code,
@@ -66,7 +68,8 @@ export async function GET() {
 export async function POST(req: Request) {
   return withApiHandler(async () => {
     const body = (await req.json()) as {
-      action?: "employee" | "attendance" | "leave" | "approve_leave";
+      action?: "employee" | "attendance" | "leave" | "approve_leave" | "source" | "approve_source" | "leave_balance" | "accrue_leave" | "end_employment";
+      kind?: string; payload?: unknown; asOf?: string; joinDate?: string;
       id?: string;
       code?: string;
       name?: string;
@@ -84,6 +87,18 @@ export async function POST(req: Request) {
       reason?: string;
     };
 
+    if (body.action === "end_employment") {
+      const ctx=await requirePermission(["employee:manage","employee_sensitive:view"]); await assertRequestAccess(ctx,body);
+      return {employee:await endEmployment({companyId:ctx.companyId,employeeId:String(body.employeeId??""),endDate:new Date(body.endDate??""),reason:String(body.reason??"")})};
+    }
+    if (body.action === "source" || body.action === "approve_source" || body.action === "leave_balance" || body.action === "accrue_leave") {
+      const ctx=await requirePermission([body.action === "approve_source" ? "payroll:approve" : "payroll:prepare", "employee_sensitive:view"]);
+      await assertRequestAccess(ctx,body);
+      if (body.action === "accrue_leave") return {entry:await accrueLeave({companyId:ctx.companyId,userId:ctx.user.id,employeeId:String(body.employeeId??""),leaveType:String(body.leaveType??"ANNUAL"),month:new Date(body.workDate??"")})};
+      if (body.action === "approve_source") return {source:await approveHrPayrollSource({companyId:ctx.companyId,userId:ctx.user.id,id:String(body.id??"")})};
+      if (body.action === "leave_balance") return {balance:await getLeaveBalance({companyId:ctx.companyId,employeeId:String(body.employeeId??""),leaveType:String(body.leaveType??"ANNUAL"),asOf:new Date(body.asOf??"")})};
+      return {source:await createHrPayrollSource({companyId:ctx.companyId,userId:ctx.user.id,employeeId:String(body.employeeId??""),kind:String(body.kind??""),workDate:new Date(body.workDate??""),payload:body.payload})};
+    }
     if (body.action === "attendance") {
       const ctx = await requirePermission("attendance:manage");
     await assertRequestAccess(ctx, body);
@@ -114,7 +129,7 @@ export async function POST(req: Request) {
     if (body.action === "approve_leave") {
       const ctx = await requirePermission("leave:approve");
     await assertRequestAccess(ctx, body);
-      const leave = await approveLeaveRequest(ctx.companyId, String(body.id ?? ""));
+      const leave = await approveLeaveRequest(ctx.companyId, String(body.id ?? ""), ctx.user.id);
       return { leave: { id: leave.id, status: leave.status } };
     }
 
@@ -127,7 +142,7 @@ export async function POST(req: Request) {
       email: body.email,
       phone: body.phone,
       position: body.position,
-      baseSalary: body.baseSalary,
+      baseSalary: body.baseSalary, joinDate: body.joinDate ? new Date(body.joinDate) : undefined,
     });
     return { employee: { id: emp.id, code: emp.code } };
   });

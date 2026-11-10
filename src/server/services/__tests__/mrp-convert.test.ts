@@ -10,7 +10,7 @@ const db = {
 jest.mock("@/lib/db", () => ({ get prisma() { return db; } }));
 jest.mock("@/lib/document-number", () => ({nextDocumentNumber: jest.fn(async () => "PO/1")}));
 it("conversion rejects foreign warehouse before creating a document", async () => {
-  db.mrpSuggestion.findFirst.mockResolvedValue({id:"s",productId:"p",isConverted:false,suggestionType:"PURCHASE",quantity:"2",mrpRun:{number:"MRP/1"}});
+  db.mrpSuggestion.findFirst.mockResolvedValue({id:"s",productId:"p",isConverted:false,decision:"ACCEPTED",suggestionType:"PURCHASE",quantity:"2",mrpRun:{number:"MRP/1"}});
   db.product.findFirst.mockResolvedValue({id:"p",purchasePrice:"10"});
   db.warehouse.findFirst.mockResolvedValue(null);
   db.mrpSuggestion.updateMany.mockResolvedValue({count:1});
@@ -18,7 +18,7 @@ it("conversion rejects foreign warehouse before creating a document", async () =
   expect(db.purchaseOrder.create).not.toHaveBeenCalled();
 });
 it("conversion rolls back document when conditional claim fails", async () => {
-  db.mrpSuggestion.findFirst.mockResolvedValue({id:"s",productId:"p",isConverted:false,suggestionType:"PURCHASE",quantity:"2",mrpRun:{number:"MRP/1"}});
+  db.mrpSuggestion.findFirst.mockResolvedValue({id:"s",productId:"p",isConverted:false,decision:"ACCEPTED",suggestionType:"PURCHASE",quantity:"2",mrpRun:{number:"MRP/1"}});
   db.product.findFirst.mockResolvedValue({id:"p",purchasePrice:"10"});
   db.supplier.findFirst.mockResolvedValue({id:"s1"});
   db.mrpSuggestion.updateMany.mockResolvedValue({count:0});

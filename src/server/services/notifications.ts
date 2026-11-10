@@ -54,31 +54,9 @@ export async function markNotificationRead(id: string, userId: string) {
   });
 }
 
-/** Dev/simple sender: marks pending emails as SENT (log body). Hook real SMTP later. */
+/** No documented provider configuration exists; retain queued mail until a real transport is configured. */
 export async function flushEmailOutbox(limit = 20) {
-  const pending = await prisma.emailOutbox.findMany({
-    where: { status: "PENDING" },
-    orderBy: { createdAt: "asc" },
-    take: limit,
-  });
-
-  for (const mail of pending) {
-    try {
-      console.info("[email]", mail.toEmail, mail.subject);
-      await prisma.emailOutbox.update({
-        where: { id: mail.id },
-        data: { status: "SENT", sentAt: new Date() },
-      });
-    } catch (error) {
-      await prisma.emailOutbox.update({
-        where: { id: mail.id },
-        data: {
-          status: "FAILED",
-          error: error instanceof Error ? error.message : "send failed",
-        },
-      });
-    }
-  }
-
-  return { processed: pending.length };
+  void limit; // Preserve existing callers while delivery is blocked.
+  // ponytail: Add provider delivery only with a documented contract and verified acceptance response.
+  return { processed: 0, blocked: true, reason: "EMAIL_TRANSPORT_NOT_CONFIGURED" };
 }

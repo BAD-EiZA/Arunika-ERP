@@ -1,8 +1,11 @@
 import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
+import { hasPermission } from "@/lib/permissions";
+import { validationError } from "@/lib/errors";
 import {
   billProjectSource,
+  approveProjectExpense, postProjectExpense, allocateProjectCost, reverseProjectAllocation,
   addProjectExpense,
   approveTimesheet,
   createProject,
@@ -16,7 +19,9 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   return withApiHandler(async () => {
     const ctx = await requirePermission("project:view");
-    const [projects, employees, customers] = await Promise.all([
+    const canPost = hasPermission(ctx.permissions, ["project:manage", "journal:post"]);
+    const canPayroll = hasPermission(ctx.permissions, ["payroll:view", "employee_sensitive:view"]);
+    const [projects, employees, customers, accounts, allocations, sourceLines] = await Promise.all([
       prisma.project.findMany({
         where: { companyId: ctx.companyId },
         include: {
@@ -34,16 +39,23 @@ export async function GET() {
       prisma.customer.findMany({
         where: { companyId: ctx.companyId, isActive: true },
       }),
+      canPost ? prisma.account.findMany({ where: { companyId: ctx.companyId, isActive: true }, select: { code: true, name: true, type: true }, orderBy: { code: "asc" } }) : [],
+      canPost ? prisma.projectCostAllocation.findMany({ where: { companyId: ctx.companyId, ...(canPayroll ? {} : { kind: "MATERIAL" }) }, orderBy: { createdAt: "desc" } }) : [],
+      canPost ? prisma.journalLine.findMany({ where: { projectCostAllocation: null, debit: { gt: 0 }, credit: 0, account: { companyId: ctx.companyId, type: { in: ["EXPENSE", "COGS", "OTHER_EXPENSE"] } }, journal: { companyId: ctx.companyId, status: "POSTED", currency: "IDR", exchangeRate: 1, reversalOfId: null, reversals: { none: { status: "POSTED" } }, sourceDocType: { in: canPayroll ? ["payroll_run", "DeliveryOrder"] : ["DeliveryOrder"] } } }, include: { journal: { select: { number: true, sourceDocType: true } }, account: { select: { code: true, name: true } } }, orderBy: { journal: { postingDate: "desc" } }, take: 200 }) : [],
     ]);
 
     return {
+      canPost, accounts,
+      allocations: allocations.map((a) => ({ id: a.id, projectId: a.projectId, journalLineId: a.journalLineId, kind: a.kind, amount: a.amount.toString(), status: a.status })),
+      sourceLines: sourceLines.map((l) => ({ id: l.id, kind: l.journal.sourceDocType === "payroll_run" ? "PAYROLL" : "MATERIAL", label: `${l.journal.number} · ${l.account.code} ${l.account.name}`, amount: l.debit.toString() })),
       projects: projects.map((p) => ({
         id: p.id,
         code: p.code,
         name: p.name,
         status: p.status,
         budgetAmount: p.budgetAmount.toString(),
-        actualCost: p.actualCost.toString(),
+        // Cached legacy actualCost is not a verified posted cost.
+        actualCost: null,
         billedAmount: p.billedAmount.toString(),
         managerName: p.managerName,
         invoices: p.invoices.map((i) => ({ id: i.id, number: i.number, total: i.total.toString(), status: i.status })),
@@ -67,6 +79,7 @@ export async function GET() {
         expenses: p.expenses.map((e) => ({
           id: e.id,
           description: e.description,
+          status: e.status, debitAccountCode: e.debitAccountCode, creditAccountCode: e.creditAccountCode,
           amount: e.amount.toString(),
         })),
       })),
@@ -87,7 +100,8 @@ export async function POST(req: Request) {
         | "timesheet"
         | "approve_timesheet"
         | "expense"
-        | "profitability";
+        | "profitability" | "approve_expense" | "post_expense" | "allocate_cost" | "reverse_allocation";
+      debitAccountCode?: string; creditAccountCode?: string; journalLineId?: string; kind?: "PAYROLL" | "MATERIAL"; reason?: string;
       id?: string;
       projectId?: string;
       code?: string;
@@ -110,6 +124,20 @@ export async function POST(req: Request) {
       plannedHours?: string | number;
     };
 
+    if (["approve_expense", "post_expense", "allocate_cost", "reverse_allocation"].includes(body.action ?? "")) {
+      const ctx = await requirePermission(["project:manage", "journal:post"]);
+      await assertRequestAccess(ctx, body);
+      const actor = { companyId: ctx.companyId, userId: ctx.user.id, id: String(body.id ?? "") };
+      if (body.action === "approve_expense") return { expense: await approveProjectExpense({ ...actor, debitAccountCode: String(body.debitAccountCode ?? ""), creditAccountCode: String(body.creditAccountCode ?? "") }) };
+      if (body.action === "post_expense") return { expense: await postProjectExpense(actor) };
+      if (body.action === "reverse_allocation") {
+        const saved = await prisma.projectCostAllocation.findFirst({ where: { id: actor.id, companyId: ctx.companyId } });
+        if (saved?.kind === "PAYROLL") await requirePermission(["payroll:view", "employee_sensitive:view"]);
+        return { allocation: await reverseProjectAllocation({ ...actor, reason: String(body.reason ?? "") }) };
+      }
+      if (body.kind === "PAYROLL") await requirePermission(["payroll:view", "employee_sensitive:view"]);
+      return { allocation: await allocateProjectCost({ ...actor, projectId: String(body.projectId ?? ""), journalLineId: String(body.journalLineId ?? ""), kind: body.kind! }) };
+    }
     if (body.action === "bill") {
       const ctx = await requirePermission(["project_billing:create", "invoice:issue"]);
       await assertRequestAccess(ctx, body);
@@ -166,7 +194,7 @@ export async function POST(req: Request) {
         description: String(body.description ?? ""),
         amount: body.amount ?? 0,
       });
-      return { expense: { id: expense.id } };
+      return { expense: { id: expense.id, status: expense.status } };
     }
 
     if (body.action === "profitability") {
@@ -178,6 +206,7 @@ export async function POST(req: Request) {
       );
     }
 
+    if (body.action !== "create") throw validationError("Aksi project tidak valid");
     const ctx = await requirePermission("project:create");
     await assertRequestAccess(ctx, body);
     const project = await createProject({
