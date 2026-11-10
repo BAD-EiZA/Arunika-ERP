@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { runFormAction } from "@/lib/action";
 import {
+  assertRequestAccess,
+  assertResourceAccess,
   clearActiveCompanyId,
   listUserCompanies,
   requirePermission,
@@ -96,6 +98,7 @@ export async function actionSwitchCompany(formData: FormData): Promise<void> {
 export async function actionCreateProduct(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("product:create");
+    await assertRequestAccess(ctx, Object.fromEntries(formData));
     const product = await createProduct({
       companyId: ctx.companyId,
       sku: formStr(formData, "sku"),
@@ -158,6 +161,7 @@ export async function actionCreateCategory(formData: FormData) {
 export async function actionOpeningStock(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("stock:adjust");
+    await assertRequestAccess(ctx, Object.fromEntries(formData));
     const movement = await prisma.$transaction((tx) =>
       postStockMovement(tx, {
         companyId: ctx.companyId,
@@ -167,6 +171,7 @@ export async function actionOpeningStock(formData: FormData) {
         quantity: formNum(formData, "quantity"),
         unitCost: formNum(formData, "unitCost") || 0,
         referenceType: "OpeningBalance",
+        access: { branchIds: ctx.branchIds, warehouseIds: ctx.warehouseIds },
         createdById: ctx.user.id,
         idempotencyKey: `open:${formStr(formData, "productId")}:${Date.now()}`,
       }),
@@ -182,7 +187,7 @@ export async function actionCreatePO(formData: FormData) {
     const productId = formStr(formData, "productId");
     const quantity = formNum(formData, "quantity");
     const unitPrice = formNum(formData, "unitPrice");
-    const po = await createPurchaseOrder({
+    const po = {
       companyId: ctx.companyId,
       userId: ctx.user.id,
       supplierId: formStr(formData, "supplierId"),
@@ -190,15 +195,18 @@ export async function actionCreatePO(formData: FormData) {
       warehouseId: formStr(formData, "warehouseId") || undefined,
       notes: formStr(formData, "notes") || undefined,
       items: [{ productId, quantity, unitPrice }],
-    });
+    };
+    await assertRequestAccess(ctx, po);
+    const created = await createPurchaseOrder(po);
     revalidatePath("/procurement/purchase-orders");
-    return po;
+    return created;
   });
 }
 
 export async function actionApprovePO(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("purchase_order:approve");
+    await assertResourceAccess(ctx, "purchaseOrder", formStr(formData, "id"));
     const po = await approvePurchaseOrder(
       ctx.companyId,
       ctx.user.id,
@@ -212,6 +220,7 @@ export async function actionApprovePO(formData: FormData) {
 export async function actionSubmitPO(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("purchase_order:submit");
+    await assertResourceAccess(ctx, "purchaseOrder", formStr(formData, "id"));
     const po = await submitPurchaseOrder(
       ctx.companyId,
       ctx.user.id,
@@ -225,7 +234,7 @@ export async function actionSubmitPO(formData: FormData) {
 export async function actionPostGR(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("goods_receipt:post");
-    const gr = await postGoodsReceipt({
+    const gr = {
       companyId: ctx.companyId,
       userId: ctx.user.id,
       purchaseOrderId: formStr(formData, "purchaseOrderId"),
@@ -238,17 +247,19 @@ export async function actionPostGR(formData: FormData) {
           unitCost: formNum(formData, "unitCost") || undefined,
         },
       ],
-    });
+    };
+    await assertRequestAccess(ctx, gr);
+    const created = await postGoodsReceipt(gr);
     revalidatePath("/procurement/goods-receipts");
     revalidatePath("/inventory/stock");
-    return gr;
+    return created;
   });
 }
 
 export async function actionCreateBill(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("supplier_bill:create");
-    const bill = await createSupplierBill({
+    const bill = {
       companyId: ctx.companyId,
       userId: ctx.user.id,
       supplierId: formStr(formData, "supplierId"),
@@ -263,16 +274,19 @@ export async function actionCreateBill(formData: FormData) {
           taxAmount: formNum(formData, "taxAmount") || 0,
         },
       ],
-    });
+    };
+    await assertRequestAccess(ctx, bill);
+    const created = await createSupplierBill(bill);
     revalidatePath("/procurement/bills");
-    return bill;
+    return created;
+
   });
 }
 
 export async function actionPaySupplier(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("supplier_payment:create");
-    const payment = await postSupplierPayment({
+    const payment = {
       companyId: ctx.companyId,
       userId: ctx.user.id,
       supplierId: formStr(formData, "supplierId"),
@@ -284,16 +298,19 @@ export async function actionPaySupplier(formData: FormData) {
           amount: formNum(formData, "amount"),
         },
       ],
-    });
+    };
+    await assertRequestAccess(ctx, payment);
+    const created = await postSupplierPayment(payment);
     revalidatePath("/procurement/payments");
-    return payment;
+    return created;
+
   });
 }
 
 export async function actionCreateSO(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("sales_order:create");
-    const so = await createSalesOrder({
+    const so = {
       companyId: ctx.companyId,
       userId: ctx.user.id,
       customerId: formStr(formData, "customerId"),
@@ -308,15 +325,18 @@ export async function actionCreateSO(formData: FormData) {
           taxAmount: formNum(formData, "taxAmount") || 0,
         },
       ],
-    });
+    };
+    await assertRequestAccess(ctx, so);
+    const created = await createSalesOrder(so);
     revalidatePath("/sales/orders");
-    return so;
+    return created;
   });
 }
 
 export async function actionApproveSO(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("sales_order:approve");
+    await assertResourceAccess(ctx, "salesOrder", formStr(formData, "id"));
     const so = await approveSalesOrder(
       ctx.companyId,
       ctx.user.id,
@@ -330,7 +350,7 @@ export async function actionApproveSO(formData: FormData) {
 export async function actionPostDO(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("delivery_order:post");
-    const delivery = await postDeliveryOrder({
+    const delivery = {
       companyId: ctx.companyId,
       userId: ctx.user.id,
       salesOrderId: formStr(formData, "salesOrderId"),
@@ -341,31 +361,35 @@ export async function actionPostDO(formData: FormData) {
           quantityDelivered: formNum(formData, "quantityDelivered"),
         },
       ],
-    });
+    };
+    await assertRequestAccess(ctx, delivery);
+    const created = await postDeliveryOrder(delivery);
     revalidatePath("/sales/deliveries");
     revalidatePath("/inventory/stock");
-    return delivery;
+    return created;
   });
 }
 
 export async function actionIssueInvoice(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("invoice:issue");
-    const invoice = await issueInvoiceFromDelivery({
+    const invoice = {
       companyId: ctx.companyId,
       userId: ctx.user.id,
       deliveryOrderId: formStr(formData, "deliveryOrderId"),
       taxRate: formNum(formData, "taxRate") || 11,
-    });
+    };
+    await assertRequestAccess(ctx, invoice);
+    const created = await issueInvoiceFromDelivery(invoice);
     revalidatePath("/sales/invoices");
-    return invoice;
+    return created;
   });
 }
 
 export async function actionPayCustomer(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("payment:create");
-    const payment = await postCustomerPayment({
+    const payment = {
       companyId: ctx.companyId,
       userId: ctx.user.id,
       customerId: formStr(formData, "customerId"),
@@ -377,16 +401,18 @@ export async function actionPayCustomer(formData: FormData) {
           amount: formNum(formData, "amount"),
         },
       ],
-    });
+    };
+    await assertRequestAccess(ctx, payment);
+    const created = await postCustomerPayment(payment);
     revalidatePath("/sales/payments");
-    return payment;
+    return created;
   });
 }
 
 export async function actionCreatePR(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("purchase_request:create");
-    const pr = await createPurchaseRequest({
+    const pr = {
       companyId: ctx.companyId,
       userId: ctx.user.id,
       branchId: formStr(formData, "branchId") || undefined,
@@ -397,15 +423,18 @@ export async function actionCreatePR(formData: FormData) {
           quantity: formNum(formData, "quantity"),
         },
       ],
-    });
+    };
+    await assertRequestAccess(ctx, pr);
+    const created = await createPurchaseRequest(pr);
     revalidatePath("/procurement/requests");
-    return pr;
+    return created;
   });
 }
 
 export async function actionApprovePR(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("purchase_request:approve");
+    await assertResourceAccess(ctx, "purchaseRequest", formStr(formData, "id"));
     const pr = await approvePurchaseRequest(
       ctx.companyId,
       ctx.user.id,
@@ -420,6 +449,8 @@ export async function actionCreateRfq(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("rfq:create");
     const supplierIds = formData.getAll("supplierIds").map(String);
+    await assertRequestAccess(ctx, Object.fromEntries(formData));
+    for (const supplierId of supplierIds) await assertResourceAccess(ctx, "supplier", supplierId);
     const rfq = await createRfq({
       companyId: ctx.companyId,
       purchaseRequestId: formStr(formData, "purchaseRequestId") || undefined,
@@ -434,7 +465,7 @@ export async function actionCreateRfq(formData: FormData) {
 export async function actionSubmitQuotation(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("rfq:create");
-    const q = await submitVendorQuotation({
+    const q = {
       companyId: ctx.companyId,
       rfqId: formStr(formData, "rfqId"),
       supplierId: formStr(formData, "supplierId"),
@@ -446,23 +477,27 @@ export async function actionSubmitQuotation(formData: FormData) {
           unitPrice: formNum(formData, "unitPrice"),
         },
       ],
-    });
+    };
+    await assertRequestAccess(ctx, q);
+    const created = await submitVendorQuotation(q);
     revalidatePath("/procurement/rfq");
-    return q;
+    return created;
   });
 }
 
 export async function actionAwardRfq(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("rfq:award");
-    const result = await awardRfq({
+    const rfq = {
       companyId: ctx.companyId,
       userId: ctx.user.id,
       rfqId: formStr(formData, "rfqId"),
       quotationId: formStr(formData, "quotationId"),
       warehouseId: formStr(formData, "warehouseId") || undefined,
       branchId: formStr(formData, "branchId") || undefined,
-    });
+    };
+    await assertRequestAccess(ctx, rfq);
+    const result = await awardRfq(rfq);
     revalidatePath("/procurement/rfq");
     revalidatePath("/procurement/purchase-orders");
     return result;
@@ -472,6 +507,7 @@ export async function actionAwardRfq(formData: FormData) {
 export async function actionThreeWayMatch(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("three_way_match:review");
+    await assertRequestAccess(ctx, Object.fromEntries(formData));
     const match = await reviewThreeWayMatch({
       companyId: ctx.companyId,
       userId: ctx.user.id,
@@ -530,7 +566,7 @@ export async function actionCreateBank(formData: FormData) {
 export async function actionImportStatement(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("bank_reconciliation:perform");
-    const statement = await importBankStatement({
+    const statement = {
       companyId: ctx.companyId,
       bankAccountId: formStr(formData, "bankAccountId"),
       statementDate: new Date(formStr(formData, "statementDate") || Date.now()),
@@ -543,9 +579,11 @@ export async function actionImportStatement(formData: FormData) {
           amount: formNum(formData, "lineAmount"),
         },
       ],
-    });
+    };
+    await assertRequestAccess(ctx, statement);
+    const created = await importBankStatement(statement);
     revalidatePath("/finance/bank");
-    return statement;
+    return created;
   });
 }
 
@@ -590,6 +628,7 @@ export async function actionCreateAsset(formData: FormData) {
 export async function actionDepreciateAsset(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("fixed_asset:manage");
+    await assertResourceAccess(ctx, "fixedAsset", formStr(formData, "id"));
     const asset = await runStraightLineDepreciation(
       ctx.companyId,
       formStr(formData, "id"),
@@ -602,6 +641,7 @@ export async function actionDepreciateAsset(formData: FormData) {
 export async function actionClosePeriod(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("period:close");
+    await assertResourceAccess(ctx, "fiscalPeriod", formStr(formData, "id"));
     const period = await closeFiscalPeriod(ctx.companyId, formStr(formData, "id"));
     revalidatePath("/finance/periods");
     return period;
@@ -630,6 +670,7 @@ export async function actionCreateTaxDoc(formData: FormData) {
 export async function actionCorrectTaxDoc(formData: FormData) {
   return runFormAction(async () => {
     const ctx = await requirePermission("tax_document:correct");
+    await assertResourceAccess(ctx, "taxDocument", formStr(formData, "id"));
     const doc = await correctTaxDocument({
       companyId: ctx.companyId,
       taxDocumentId: formStr(formData, "id"),

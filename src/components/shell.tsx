@@ -43,6 +43,9 @@ import { actionSwitchCompany } from "@/app/actions";
 import { Button, Select, UserAvatar } from "@/components/ui";
 import { AppDropdown, toast } from "@/components/heroui-kit";
 import { filterNavByPermissions } from "@/lib/nav-access";
+import { Omnibox } from "@/components/omnibox";
+import { TenantQueryProvider } from "@/components/providers/query-provider";
+import { useQueryClient } from "@tanstack/react-query";
 
 type NavItem = {
   href: string;
@@ -382,7 +385,11 @@ function Brand({ collapsed }: { collapsed?: boolean }) {
   );
 }
 
-export function AppShell({
+export function AppShell(props: React.ComponentProps<typeof TenantShell>) {
+  return <TenantQueryProvider key={props.activeCompanyId} companyId={props.activeCompanyId}><TenantShell {...props} /></TenantQueryProvider>;
+}
+
+function TenantShell({
   children,
   companyName,
   userName,
@@ -399,6 +406,7 @@ export function AppShell({
   permissions?: PermissionGrant;
   roleCode?: string;
 }) {
+  const queryClient = useQueryClient();
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [query, setQuery] = useState("");
@@ -599,9 +607,15 @@ export function AppShell({
                     ]}
                   />
                 </div>
+                <Omnibox key={activeCompanyId} companyId={activeCompanyId} />
                 {companies.length > 1 ? (
                   <form
-                    action={actionSwitchCompany}
+                    action={async (data) => {
+                      await queryClient.cancelQueries();
+                      queryClient.clear();
+                      await actionSwitchCompany(data);
+                    }}
+                    onSubmit={() => queryClient.clear()}
                     className="hidden items-center gap-2 md:flex"
                   >
                     <Select name="companyId" defaultValue={activeCompanyId}>

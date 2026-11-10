@@ -22,8 +22,8 @@ function parseRange(url: URL) {
 
 export async function GET(req: Request) {
   return withApiHandler(async () => {
-    const ctx = await requirePermission("report:view");
     const url = new URL(req.url);
+    const ctx = await requirePermission(url.searchParams.get("format") === "csv" ? ["report:view", "report:export"] : "report:view");
     const format = url.searchParams.get("format") || "json";
     const type = url.searchParams.get("type") || "fs";
     const range = parseRange(url);

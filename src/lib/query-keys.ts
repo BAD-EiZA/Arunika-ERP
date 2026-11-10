@@ -1,3 +1,7 @@
+export function makeKey(companyId: string, ...parts: readonly unknown[]) {
+  return [companyId, ...parts] as const;
+}
+
 export const queryKeys = {
   dashboard: ["dashboard"] as const,
   products: {

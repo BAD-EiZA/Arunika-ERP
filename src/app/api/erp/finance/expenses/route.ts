@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requireIdempotencyKey, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("journal:view");
     const [claims, accounts] = await Promise.all([
       prisma.expenseClaim.findMany({
         where: { companyId: ctx.companyId },
@@ -46,6 +46,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   return withApiHandler(async () => {
+    const idempotencyKey = requireIdempotencyKey(req);
     const body = (await req.json()) as {
       action?: "create" | "approve" | "post";
       id?: string;
@@ -59,6 +60,7 @@ export async function POST(req: Request) {
 
     if (body.action === "approve") {
       const ctx = await requirePermission("journal:create");
+    await assertRequestAccess(ctx, body);
       const claim = await approveExpenseClaim(
         ctx.companyId,
         String(body.id ?? ""),
@@ -67,6 +69,7 @@ export async function POST(req: Request) {
     }
     if (body.action === "post") {
       const ctx = await requirePermission("journal:post");
+    await assertRequestAccess(ctx, body);
       const claim = await postExpenseClaim({
         companyId: ctx.companyId,
         userId: ctx.user.id,
@@ -76,6 +79,7 @@ export async function POST(req: Request) {
     }
 
     const ctx = await requirePermission("journal:create");
+    await assertRequestAccess(ctx, body);
     const claim = await createExpenseClaim({
       companyId: ctx.companyId,
       userId: ctx.user.id,

@@ -1,344 +1,89 @@
-import { postFromRule, postJournal } from "@/server/services/accounting";
+import { postFromRule, postJournal, postDraftJournal, saveDraftJournal } from "@/server/services/accounting";
 
-jest.mock("@/lib/document-number", () => ({
-  nextDocumentNumber: jest.fn(async () => "JE/202607/000001"),
-}));
-
-function makeTx(opts: {
-  existingJournal?: unknown;
-  periodStatus?: "OPEN" | "CLOSED" | null;
-  accounts?: Array<{ id: string; code: string }>;
-  rule?: unknown;
-} = {}) {
+jest.mock("@/lib/document-number", () => ({ nextDocumentNumber: jest.fn(async () => "JE/1") }));
+const db = { $transaction: jest.fn() };
+jest.mock("@/lib/db", () => ({ prisma: { $transaction: (...args: unknown[]) => db.$transaction(...args) } }));
+const journalInput = {
+  companyId: "c", sourceModule: "m", sourceDocType: "t", sourceDocId: "1",
+  description: "test", idempotencyKey: "key",
+  lines: [{ accountCode: "1100", debit: 10 }, { accountCode: "2100", credit: 10 }],
+};
+const ruleInput = { companyId: "c", sourceEvent: "generic", sourceDocType: "t", sourceDocId: "1", description: "test", amount: 10, idempotencyKey: "rule" };
+function makeTx() {
   return {
-    journal: {
-      findUnique: jest.fn(async () => opts.existingJournal ?? null),
-      create: jest.fn(async ({ data }: { data: unknown }) => ({
-        id: "j1",
-        ...(data as object),
-        lines: [],
-      })),
-    },
-    fiscalPeriod: {
-      findFirst: jest.fn(async () =>
-        opts.periodStatus === null
-          ? null
-          : opts.periodStatus
-            ? { id: "fp1", status: opts.periodStatus }
-            : { id: "fp1", status: "OPEN" },
-      ),
-    },
-    account: {
-      findMany: jest.fn(async () =>
-        opts.accounts ?? [
-          { id: "a1", code: "1100" },
-          { id: "a2", code: "2100" },
-          { id: "a3", code: "1120" },
-          { id: "a4", code: "4100" },
-          { id: "a5", code: "2120" },
-          { id: "a6", code: "2110" },
-          { id: "a7", code: "1140" },
-          { id: "a8", code: "1130" },
-        ],
-      ),
-    },
-    postingRule: {
-      findFirst: jest.fn(async () => opts.rule ?? null),
-    },
+    journal: { findUnique: jest.fn().mockResolvedValue(null), findFirst: jest.fn(), create: jest.fn().mockResolvedValue({ id: "j" }), update: jest.fn() },
+    journalLine: { deleteMany: jest.fn() },
+    fiscalPeriod: { findFirst: jest.fn().mockResolvedValue({ id: "p", status: "OPEN", fiscalYear: { isClosed: false } }) },
+    account: { findMany: jest.fn().mockResolvedValue(["1100", "2100", "1120", "4100", "2120", "2110", "1140", "1130", "5100"].map(code => ({ id: code, code, isActive: true, isPosting: true }))) },
+    postingRule: { findFirst: jest.fn().mockResolvedValue({ versions: [{ config: { lines: [{ side: "DEBIT", accountCode: "1100" }, { side: "CREDIT", accountCode: "2100" }] } }] }) },
   };
 }
 
-describe("accounting", () => {
-  it("returns existing journal for idempotency", async () => {
-    const existing = { id: "old" };
-    const tx = makeTx({ existingJournal: existing });
-    const r = await postJournal(tx as never, {
-      companyId: "c1",
-      sourceModule: "m",
-      sourceDocType: "t",
-      sourceDocId: "1",
-      description: "d",
-      idempotencyKey: "k",
-      lines: [
-        { accountCode: "1100", debit: 10 },
-        { accountCode: "2100", credit: 10 },
-      ],
-    });
-    expect(r).toBe(existing);
+describe("accounting fail-closed posting", () => {
+  beforeEach(() => jest.clearAllMocks());
+  it.each([null, { versions: [] }])("rejects absent effective rule %p", async rule => {
+    const tx = makeTx(); tx.postingRule.findFirst.mockResolvedValue(rule);
+    await expect(postFromRule(tx as never, ruleInput)).rejects.toThrow("Posting rule");
+    expect(tx.journal.create).not.toHaveBeenCalled();
   });
-
-  it("validates min lines and balance", async () => {
-    const tx = makeTx();
-    await expect(
-      postJournal(tx as never, {
-        companyId: "c1",
-        sourceModule: "m",
-        sourceDocType: "t",
-        sourceDocId: "1",
-        description: "d",
-        idempotencyKey: "k1",
-        lines: [{ accountCode: "1100", debit: 10 }],
-      }),
-    ).rejects.toThrow("Jurnal minimal 2 baris");
-
-    await expect(
-      postJournal(tx as never, {
-        companyId: "c1",
-        sourceModule: "m",
-        sourceDocType: "t",
-        sourceDocId: "1",
-        description: "d",
-        idempotencyKey: "k2",
-        lines: [
-          { accountCode: "1100", debit: 10 },
-          { accountCode: "2100", credit: 5 },
-        ],
-      }),
-    ).rejects.toThrow("Jurnal tidak seimbang");
+  it.each(["generic", "sales_invoice.issue", "supplier_bill.open", "credit_note.issue", "debit_note.issue", "delivery_order.post"])("propagates journal failure for %s", async sourceEvent => {
+    const tx = makeTx(); tx.journal.create.mockRejectedValue(new Error("journal failed"));
+    await expect(postFromRule(tx as never, { ...ruleInput, sourceEvent })).rejects.toThrow("journal failed");
   });
-
-  it("rejects closed period and missing account", async () => {
-    const txClosed = makeTx({ periodStatus: "CLOSED" });
-    await expect(
-      postJournal(txClosed as never, {
-        companyId: "c1",
-        sourceModule: "m",
-        sourceDocType: "t",
-        sourceDocId: "1",
-        description: "d",
-        idempotencyKey: "k3",
-        lines: [
-          { accountCode: "1100", debit: 10 },
-          { accountCode: "2100", credit: 10 },
-        ],
-      }),
-    ).rejects.toThrow("Periode akuntansi sudah ditutup");
-
-    const txMissing = makeTx({ accounts: [{ id: "a1", code: "1100" }] });
-    await expect(
-      postJournal(txMissing as never, {
-        companyId: "c1",
-        sourceModule: "m",
-        sourceDocType: "t",
-        sourceDocId: "1",
-        description: "d",
-        idempotencyKey: "k4",
-        lines: [
-          { accountCode: "1100", debit: 10 },
-          { accountCode: "9999", credit: 10 },
-        ],
-      }),
-    ).rejects.toThrow("Akun 9999 tidak ditemukan");
-  });
-
-  it("posts balanced journal without period", async () => {
-    const tx = makeTx({ periodStatus: null });
-    const r = await postJournal(tx as never, {
-      companyId: "c1",
-      sourceModule: "m",
-      sourceDocType: "t",
-      sourceDocId: "1",
-      description: "d",
-      idempotencyKey: "",
-      journalType: "GENERAL",
-      postedById: "u1",
-      postingDate: new Date("2026-07-01"),
-      lines: [
-        { accountCode: "1100", debit: 10, description: "dr" },
-        { accountCode: "2100", credit: 10 },
-        { accountCode: "1100", debit: 0, credit: 0 },
-      ],
-    });
-    expect(r.id).toBe("j1");
-    expect(tx.journal.create).toHaveBeenCalled();
-    expect(tx.journal.findUnique).not.toHaveBeenCalled();
-  });
-
-  it("postJournal default postingDate and credit-only filter", async () => {
-    const tx = makeTx();
-    await postJournal(tx as never, {
-      companyId: "c1",
-      sourceModule: "m",
-      sourceDocType: "t",
-      sourceDocId: "1",
-      description: "d",
-      idempotencyKey: "k-default-date",
-      lines: [
-        { accountCode: "1100", debit: 5 },
-        { accountCode: "2100", credit: 5 },
-        { accountCode: "1100" },
-      ],
-    });
+  it("creates a balanced journal", async () => {
+    const tx = makeTx(); await postJournal(tx as never, journalInput);
     expect(tx.journal.create).toHaveBeenCalled();
   });
-
-  it("postFromRule returns null without rule", async () => {
-    const tx = makeTx({ rule: null });
-    const r = await postFromRule(tx as never, {
-      companyId: "c1",
-      sourceEvent: "x",
-      sourceDocType: "t",
-      sourceDocId: "1",
-      description: "d",
-      amount: 100,
-      idempotencyKey: "k",
-    });
-    expect(r).toBeNull();
+  it("rejects posted journal without a fiscal period", async () => {
+    const tx = makeTx(); tx.fiscalPeriod.findFirst.mockResolvedValue(null);
+    await expect(postJournal(tx as never, journalInput)).rejects.toThrow("Periode akuntansi tidak ditemukan");
+    expect(tx.journal.create).not.toHaveBeenCalled();
   });
-
-  it("postFromRule returns null when no versions", async () => {
-    const tx = makeTx({ rule: { versions: [] } });
-    const r = await postFromRule(tx as never, {
-      companyId: "c1",
-      sourceEvent: "x",
-      sourceDocType: "t",
-      sourceDocId: "1",
-      description: "d",
-      amount: 100,
-      idempotencyKey: "k",
-    });
-    expect(r).toBeNull();
+  it.each([[-1, 11], [10, 10], [0, 0]])("rejects invalid debit/credit line %s %s", async (debit, credit) => {
+    const tx = makeTx();
+    await expect(postJournal(tx as never, { ...journalInput, lines: [{ accountCode: "1100", debit, credit }, { accountCode: "2100", debit: credit, credit: debit }] })).rejects.toThrow("Baris jurnal");
   });
-
-  it("postFromRule sales invoice with tax", async () => {
-    const tx = makeTx({
-      rule: {
-        versions: [
-          {
-            config: {
-              lines: [
-                { side: "DEBIT", accountCode: "1120" },
-                { side: "CREDIT", accountCode: "4100" },
-              ],
-            },
-          },
-        ],
-      },
-    });
-    const r = await postFromRule(tx as never, {
-      companyId: "c1",
-      sourceEvent: "sales_invoice.issue",
-      sourceDocType: "SalesInvoice",
-      sourceDocId: "1",
-      description: "inv",
-      amount: 100,
-      taxAmount: 11,
-      idempotencyKey: "k-inv",
-    });
-    expect(r).not.toBeNull();
+  it("rejects inactive accounts", async () => {
+    const tx = makeTx(); tx.account.findMany.mockResolvedValue([{ id: "1100", code: "1100", isActive: false }, { id: "2100", code: "2100", isActive: true }]);
+    await expect(postJournal(tx as never, journalInput)).rejects.toThrow("tidak aktif");
   });
-
-  it("postFromRule sales invoice without tax and catch error", async () => {
-    const tx = makeTx({
-      accounts: [],
-      rule: {
-        versions: [{ config: { lines: [] } }],
-      },
-    });
-    const r = await postFromRule(tx as never, {
-      companyId: "c1",
-      sourceEvent: "sales_invoice.issue",
-      sourceDocType: "SalesInvoice",
-      sourceDocId: "1",
-      description: "inv",
-      amount: 100,
-      taxAmount: 0,
-      idempotencyKey: "k-inv2",
-    });
-    expect(r).toBeNull();
+  it("rejects closed fiscal year", async () => {
+    const tx = makeTx(); tx.fiscalPeriod.findFirst.mockResolvedValue({ id: "p", status: "OPEN", fiscalYear: { isClosed: true } });
+    await expect(postJournal(tx as never, journalInput)).rejects.toThrow("tahun fiskal");
   });
-
-  it("postFromRule supplier bill with tax", async () => {
-    const tx = makeTx({
-      rule: {
-        versions: [{ config: { lines: [] } }],
-      },
-    });
-    const r = await postFromRule(tx as never, {
-      companyId: "c1",
-      sourceEvent: "supplier_bill.open",
-      sourceDocType: "SupplierBill",
-      sourceDocId: "1",
-      description: "bill",
-      amount: 100,
-      taxAmount: 11,
-      idempotencyKey: "k-bill",
-    });
-    expect(r).not.toBeNull();
+  it("rejects invalid stored draft before posting", async () => {
+    const tx = makeTx(); tx.journal.findFirst.mockResolvedValue({ id: "draft", postingDate: new Date(), lines: [{ accountId: "1100", debit: 10, credit: 0 }, { accountId: "2100", debit: 0, credit: 5 }] });
+    db.$transaction.mockImplementation(async fn => fn(tx));
+    await expect(postDraftJournal({ companyId: "c", userId: "u", journalId: "draft" })).rejects.toThrow("Jurnal tidak seimbang");
+    expect(tx.journal.update).not.toHaveBeenCalled();
   });
-
-  it("postFromRule supplier bill without tax error path", async () => {
-    const tx = makeTx({
-      accounts: [],
-      rule: { versions: [{ config: { lines: [] } }] },
-    });
-    const r = await postFromRule(tx as never, {
-      companyId: "c1",
-      sourceEvent: "supplier_bill.open",
-      sourceDocType: "SupplierBill",
-      sourceDocId: "1",
-      description: "bill",
-      amount: 100,
-      taxAmount: 0,
-      idempotencyKey: "k-bill2",
-    });
-    expect(r).toBeNull();
+  it("rejects invalid draft edit before deleting lines", async () => {
+    const tx = makeTx(); tx.journal.findFirst.mockResolvedValue({ id: "draft", postingDate: new Date(), exchangeRate: 1 });
+    db.$transaction.mockImplementation(async fn => fn(tx));
+    await expect(saveDraftJournal({ companyId: "c", userId: "u", journalId: "draft", description: "edit", lines: [{ accountCode: "1100", debit: 10 }, { accountCode: "2100", credit: 5 }] })).rejects.toThrow("Jurnal tidak seimbang");
+    expect(tx.journalLine.deleteMany).not.toHaveBeenCalled();
   });
-
-  it("postFromRule generic config path success and fail", async () => {
-    const tx = makeTx({
-      rule: {
-        versions: [
-          {
-            config: {
-              lines: [
-                { side: "DEBIT", accountCode: "1130" },
-                { side: "CREDIT", accountCode: "2110" },
-                { side: "DEBIT", accountCode: "1140", tax: true },
-              ],
-            },
-          },
-        ],
-      },
-    });
-    // tax line 0 keeps balance for non-tax lines
-    const r = await postFromRule(tx as never, {
-      companyId: "c1",
-      sourceEvent: "goods_receipt.post",
-      sourceDocType: "GoodsReceipt",
-      sourceDocId: "1",
-      description: "gr",
-      amount: 100,
-      taxAmount: 0,
-      idempotencyKey: "k-gr",
-      postedById: "u",
-    });
-    expect(r).not.toBeNull();
-
-    const txFail = makeTx({
-      accounts: [{ id: "a1", code: "1130" }],
-      rule: {
-        versions: [
-          {
-            config: {
-              lines: [
-                { side: "DEBIT", accountCode: "1130" },
-                { side: "CREDIT", accountCode: "2110" },
-              ],
-            },
-          },
-        ],
-      },
-    });
-    const r2 = await postFromRule(txFail as never, {
-      companyId: "c1",
-      sourceEvent: "goods_receipt.post",
-      sourceDocType: "GoodsReceipt",
-      sourceDocId: "1",
-      description: "gr",
-      amount: 100,
-      idempotencyKey: "k-gr2",
-    });
-    expect(r2).toBeNull();
+  it("rejects stored draft with inactive accounts", async () => {
+    const tx = makeTx(); tx.journal.findFirst.mockResolvedValue({ id: "draft", postingDate: new Date(), exchangeRate: 1, lines: [{ accountId: "1100", debit: 10 }, { accountId: "2100", credit: 10 }] });
+    tx.account.findMany.mockResolvedValue([]);
+    db.$transaction.mockImplementation(async fn => fn(tx));
+    await expect(postDraftJournal({ companyId: "c", userId: "u", journalId: "draft" })).rejects.toThrow("Akun");
+  });
+  it("rejects invalid draft edit exchange rate", async () => {
+    const tx = makeTx(); tx.journal.findFirst.mockResolvedValue({ id: "draft", postingDate: new Date(), exchangeRate: 1 });
+    db.$transaction.mockImplementation(async fn => fn(tx));
+    await expect(saveDraftJournal({ companyId: "c", userId: "u", journalId: "draft", description: "edit", lines: journalInput.lines, exchangeRate: -1 })).rejects.toThrow("Kurs");
+    expect(tx.journalLine.deleteMany).not.toHaveBeenCalled();
+  });
+  it("reuses an existing journal", async () => {
+    const tx = makeTx(); tx.journal.findUnique.mockResolvedValue({ id: "old" });
+    await expect(postJournal(tx as never, journalInput)).resolves.toEqual({ id: "old" });
+    expect(tx.journal.create).not.toHaveBeenCalled();
+  });
+  it.each([
+    [{ accountCode: "1100", debit: 10 }],
+    [{ accountCode: "1100", debit: 10 }, { accountCode: "2100", credit: 9 }],
+  ])("rejects invalid totals %p", async (...lines) => {
+    await expect(postJournal(makeTx() as never, { ...journalInput, lines: lines as typeof journalInput.lines })).rejects.toThrow();
   });
 });

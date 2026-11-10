@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import { createSupplierBill } from "@/server/services/procurement";
@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("supplier_bill:view");
     const [bills, suppliers, products, pos] = await Promise.all([
       prisma.supplierBill.findMany({
         where: { companyId: ctx.companyId },
@@ -21,7 +21,7 @@ export async function GET() {
         where: { companyId: ctx.companyId, isArchived: false },
       }),
       prisma.purchaseOrder.findMany({
-        where: { companyId: ctx.companyId },
+        where: { ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}), ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId },
         orderBy: { createdAt: "desc" },
         take: 50,
       }),
@@ -64,6 +64,7 @@ export async function POST(req: Request) {
         taxAmount?: string | number;
       }>;
     };
+    await assertRequestAccess(ctx, body);
     const bill = await createSupplierBill({
       companyId: ctx.companyId,
       userId: ctx.user.id,

@@ -1,7 +1,8 @@
-import { requirePermission } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
+  billProjectSource,
   addProjectExpense,
   approveTimesheet,
   createProject,
@@ -22,6 +23,8 @@ export async function GET() {
           tasks: true,
           timesheets: true,
           expenses: true,
+          invoices: true,
+          billings: true,
         },
         orderBy: { createdAt: "desc" },
       }),
@@ -43,10 +46,15 @@ export async function GET() {
         actualCost: p.actualCost.toString(),
         billedAmount: p.billedAmount.toString(),
         managerName: p.managerName,
+        invoices: p.invoices.map((i) => ({ id: i.id, number: i.number, total: i.total.toString(), status: i.status })),
+        billings: p.billings,
+        customerId: p.customerId,
         tasks: p.tasks.map((t) => ({
           id: t.id,
           code: t.code,
           name: t.name,
+          status: t.status,
+          billableAmount: t.billableAmount.toString(),
           plannedHours: t.plannedHours.toString(),
           actualHours: t.actualHours.toString(),
         })),
@@ -72,6 +80,8 @@ export async function POST(req: Request) {
   return withApiHandler(async () => {
     const body = (await req.json()) as {
       action?:
+        | "bill"
+        | "complete_task"
         | "create"
         | "task"
         | "timesheet"
@@ -86,6 +96,11 @@ export async function POST(req: Request) {
       budgetAmount?: string | number;
       managerName?: string;
       taskId?: string;
+      sourceType?: "task" | "timesheet";
+      sourceId?: string;
+      hourlyRate?: string | number;
+      idempotencyKey?: string;
+      billableAmount?: string | number;
       employeeId?: string;
       workDate?: string;
       hours?: string | number;
@@ -95,21 +110,36 @@ export async function POST(req: Request) {
       plannedHours?: string | number;
     };
 
+    if (body.action === "bill") {
+      const ctx = await requirePermission(["project_billing:create", "invoice:issue"]);
+      await assertRequestAccess(ctx, body);
+      return { invoice: await billProjectSource({ companyId: ctx.companyId, userId: ctx.user.id, projectId: String(body.projectId ?? ""), sourceType: body.sourceType!, sourceId: String(body.sourceId ?? ""), hourlyRate: body.hourlyRate, idempotencyKey: req.headers.get("Idempotency-Key") ?? body.idempotencyKey ?? "" }) };
+    }
+    if (body.action === "complete_task") {
+      const ctx = await requirePermission("project:manage");
+      await assertRequestAccess(ctx, body);
+      const result = await prisma.projectTask.updateMany({ where: { id: String(body.taskId ?? ""), projectId: String(body.projectId ?? ""), project: { companyId: ctx.companyId } }, data: { status: "CLOSED" } });
+      return { updated: result.count };
+    }
     if (body.action === "task") {
       const ctx = await requirePermission("project:manage");
+    await assertRequestAccess(ctx, body);
       const task = await createProjectTask({
         companyId: ctx.companyId,
         projectId: String(body.projectId ?? ""),
         code: String(body.code ?? ""),
         name: String(body.name ?? ""),
         plannedHours: body.plannedHours,
+        billableAmount: body.billableAmount,
       });
       return { task: { id: task.id, code: task.code } };
     }
 
     if (body.action === "timesheet") {
       const ctx = await requirePermission("timesheet:view");
+    await assertRequestAccess(ctx, body);
       const ts = await submitTimesheet({
+        companyId: ctx.companyId,
         projectId: String(body.projectId ?? ""),
         taskId: body.taskId || undefined,
         employeeId: body.employeeId || undefined,
@@ -122,12 +152,14 @@ export async function POST(req: Request) {
 
     if (body.action === "approve_timesheet") {
       const ctx = await requirePermission("timesheet:approve");
+    await assertRequestAccess(ctx, body);
       const ts = await approveTimesheet(String(body.id ?? ""), ctx.companyId);
       return { timesheet: { id: ts.id, status: ts.status } };
     }
 
     if (body.action === "expense") {
       const ctx = await requirePermission("project:manage");
+    await assertRequestAccess(ctx, body);
       const expense = await addProjectExpense({
         companyId: ctx.companyId,
         projectId: String(body.projectId ?? ""),
@@ -139,6 +171,7 @@ export async function POST(req: Request) {
 
     if (body.action === "profitability") {
       const ctx = await requirePermission("project_profitability:view");
+    await assertRequestAccess(ctx, body);
       return getProjectProfitability(
         ctx.companyId,
         String(body.projectId ?? ""),
@@ -146,6 +179,7 @@ export async function POST(req: Request) {
     }
 
     const ctx = await requirePermission("project:create");
+    await assertRequestAccess(ctx, body);
     const project = await createProject({
       companyId: ctx.companyId,
       code: String(body.code ?? ""),

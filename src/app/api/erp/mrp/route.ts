@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import { runMrp } from "@/server/services/mrp";
@@ -57,6 +57,7 @@ export async function POST(req: Request) {
       horizonDays?: number;
       notes?: string;
     };
+    await assertRequestAccess(ctx, body);
     const run = await runMrp({
       companyId: ctx.companyId,
       userId: ctx.user.id,

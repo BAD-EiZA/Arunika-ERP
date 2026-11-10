@@ -8,6 +8,7 @@ import {
 
 const prismaMock = {
   $transaction: jest.fn(),
+  customer: { findFirst: jest.fn(async () => ({ id: "cu", creditLimit: null })) },
   salesOrder: {
     findFirst: jest.fn(),
   },
@@ -18,6 +19,8 @@ jest.mock("@/lib/db", () => ({
     return prismaMock;
   },
 }));
+
+jest.mock("@/server/services/approvals", () => ({ assertApprovalRole: jest.fn() }));
 
 jest.mock("@/lib/audit", () => ({
   writeAudit: jest.fn(async () => undefined),
@@ -47,6 +50,8 @@ jest.mock("@/server/services/notifications", () => ({
 describe("sales", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    prismaMock.$transaction.mockReset();
+    prismaMock.salesOrder.findFirst.mockResolvedValue({ id: "so", total: "100" });
     prismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => {
       const tx = {
         salesOrder: {
@@ -230,8 +235,8 @@ describe("sales", () => {
         deliveryOrder: { findUnique: jest.fn(async () => ({ id: "exist" })) },
       }),
     );
-    expect(
-      await postDeliveryOrder({
+    await expect(
+      postDeliveryOrder({
         companyId: "c",
         userId: "u",
         salesOrderId: "so",
@@ -239,7 +244,7 @@ describe("sales", () => {
         items: [{ productId: "p1", quantityDelivered: 1 }],
         idempotencyKey: "k",
       }),
-    ).toEqual({ id: "exist" });
+    ).rejects.toThrow("Idempotensi");
 
     prismaMock.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) =>
       fn({
@@ -468,6 +473,7 @@ describe("sales", () => {
   it("issueInvoiceFromDelivery", async () => {
     prismaMock.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) =>
       fn({
+        $queryRaw: jest.fn(async () => []),
         deliveryOrder: { findFirst: jest.fn(async () => null) },
       }),
     );
@@ -481,6 +487,7 @@ describe("sales", () => {
 
     prismaMock.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) =>
       fn({
+        $queryRaw: jest.fn(async () => []),
         deliveryOrder: {
           findFirst: jest.fn(async () => ({ id: "d", status: "DRAFT" })),
         },
@@ -496,6 +503,7 @@ describe("sales", () => {
 
     prismaMock.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) =>
       fn({
+        $queryRaw: jest.fn(async () => []),
         deliveryOrder: {
           findFirst: jest.fn(async () => ({
             id: "d",
@@ -512,6 +520,7 @@ describe("sales", () => {
                   unitPrice: "100",
                   description: "Prod",
                   quantityInvoiced: "0",
+                  quantityDelivered: "2",
                 },
               ],
               customer: { id: "cu" },
@@ -519,6 +528,7 @@ describe("sales", () => {
           })),
         },
         salesInvoice: {
+          findFirst: jest.fn(async () => null),
           create: jest.fn(async () => ({
             id: "inv1",
             number: "INV/1",
@@ -541,6 +551,7 @@ describe("sales", () => {
     // no tax, missing so item product, paymentTermDays 0
     prismaMock.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) =>
       fn({
+        $queryRaw: jest.fn(async () => []),
         deliveryOrder: {
           findFirst: jest.fn(async () => ({
             id: "d",
@@ -556,6 +567,7 @@ describe("sales", () => {
           })),
         },
         salesInvoice: {
+          findFirst: jest.fn(async () => null),
           create: jest.fn(async () => ({
             id: "inv2",
             number: "INV/2",
@@ -568,11 +580,11 @@ describe("sales", () => {
         salesOrderItem: { update: jest.fn(async () => ({})) },
       }),
     );
-    await issueInvoiceFromDelivery({
+    await expect(issueInvoiceFromDelivery({
       companyId: "c",
       userId: "u",
       deliveryOrderId: "d",
-    });
+    })).rejects.toThrow("Produk tidak ada di SO");
   });
 
   it("postCustomerPayment", async () => {
@@ -622,6 +634,8 @@ describe("sales", () => {
         salesInvoice: {
           findFirst: jest.fn(async () => ({
             id: "i",
+            customerId: "cu",
+            status: "ISSUED",
             balance: "50",
             amountPaid: "0",
             total: "50",
@@ -648,6 +662,8 @@ describe("sales", () => {
         salesInvoice: {
           findFirst: jest.fn(async () => ({
             id: "i",
+            customerId: "cu",
+            status: "ISSUED",
             balance: "100",
             amountPaid: "0",
             total: "100",
@@ -676,6 +692,8 @@ describe("sales", () => {
         salesInvoice: {
           findFirst: jest.fn(async () => ({
             id: "i",
+            customerId: "cu",
+            status: "ISSUED",
             balance: "100",
             amountPaid: "0",
             total: "100",

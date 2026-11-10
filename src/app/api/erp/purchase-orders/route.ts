@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertResourceAccess, assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
@@ -11,10 +11,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("purchase_order:view");
     const [orders, suppliers, products, warehouses, branches] = await Promise.all([
       prisma.purchaseOrder.findMany({
-        where: { companyId: ctx.companyId },
+        where: { ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}), ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId },
         include: {
           supplier: true,
           items: { include: { product: true } },
@@ -28,10 +28,10 @@ export async function GET() {
         where: { companyId: ctx.companyId, isArchived: false },
       }),
       prisma.warehouse.findMany({
-        where: { companyId: ctx.companyId, isActive: true },
+        where: { ...(ctx.warehouseIds.length ? { id: { in: ctx.warehouseIds } } : {}), ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId, isActive: true },
       }),
       prisma.branch.findMany({
-        where: { companyId: ctx.companyId, isActive: true },
+        where: { ...(ctx.branchIds.length ? { id: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId, isActive: true },
       }),
     ]);
 
@@ -88,17 +88,22 @@ export async function POST(req: Request) {
 
     if (body.action === "submit") {
       const ctx = await requirePermission("purchase_order:submit");
+      await assertResourceAccess(ctx, "purchaseOrder", body.id);
+    await assertRequestAccess(ctx, body);
       const po = await submitPurchaseOrder(ctx.companyId, ctx.user.id, String(body.id));
       return { purchaseOrder: { id: po.id, status: po.status } };
     }
 
     if (body.action === "approve") {
       const ctx = await requirePermission("purchase_order:approve");
+      await assertResourceAccess(ctx, "purchaseOrder", body.id);
+    await assertRequestAccess(ctx, body);
       const po = await approvePurchaseOrder(ctx.companyId, ctx.user.id, String(body.id));
       return { purchaseOrder: { id: po.id, status: po.status } };
     }
 
     const ctx = await requirePermission("purchase_order:create");
+    await assertRequestAccess(ctx, body);
     const po = await createPurchaseOrder({
       companyId: ctx.companyId,
       userId: ctx.user.id,

@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("fixed_asset:view");
     const assets = await prisma.fixedAsset.findMany({
       where: { companyId: ctx.companyId },
       orderBy: { createdAt: "desc" },
@@ -49,6 +49,7 @@ export async function POST(req: Request) {
       disposeAmount?: string | number;
     };
     const ctx = await requirePermission("fixed_asset:manage");
+    await assertRequestAccess(ctx, body);
     if (body.action === "depreciate") {
       const asset = await runStraightLineDepreciation(
         ctx.companyId,

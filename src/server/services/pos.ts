@@ -85,6 +85,8 @@ export async function createPosOrder(input: {
   const total = subtotal;
 
   return prisma.$transaction(async (tx) => {
+    const company = await tx.company.findUnique({ where: { id: input.companyId } });
+    if (!company) throw notFound("Perusahaan tidak ditemukan");
     const number = await nextDocumentNumber(tx, input.companyId, "POS");
     const order = await tx.posOrder.create({
       data: {
@@ -117,6 +119,7 @@ export async function createPosOrder(input: {
         referenceNumber: order.number,
         createdById: input.userId,
         idempotencyKey: `${key}:${item.productId}`,
+        allowNegative: company.allowNegativeStock,
       });
     }
 

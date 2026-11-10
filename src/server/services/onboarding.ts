@@ -1,25 +1,20 @@
 import { prisma } from "@/lib/db";
-import { writeAudit } from "@/lib/audit";
+
+import type { Prisma } from "@/generated/prisma/client";
 import { conflict, validationError } from "@/lib/errors";
-import {
-  PERMISSIONS,
-  PERMISSION_META,
-  ROLE_PERMISSIONS,
-  SYSTEM_ROLES,
-} from "@/lib/permissions";
+import { PERMISSIONS, PERMISSION_META, ROLE_PERMISSIONS, SYSTEM_ROLES } from "@/lib/permissions";
 import { setActiveCompanyId } from "@/lib/auth";
 
 function slugify(input: string) {
-  return input
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "")
-    .slice(0, 12);
+  return input.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 12);
 }
 
-export async function ensureGlobalPermissions() {
+type Db = Prisma.TransactionClient;
+
+export async function ensureGlobalPermissions(db: Db = prisma) {
   for (const code of PERMISSIONS) {
     const meta = PERMISSION_META[code];
-    await prisma.permission.upsert({
+    await db.permission.upsert({
       where: { code },
       create: {
         code,
@@ -34,12 +29,12 @@ export async function ensureGlobalPermissions() {
   }
 }
 
-export async function seedCompanyRoles(companyId: string) {
-  const allPermissions = await prisma.permission.findMany();
+export async function seedCompanyRoles(companyId: string, db: Db = prisma) {
+  const allPermissions = await db.permission.findMany();
   const byCode = new Map(allPermissions.map((p) => [p.code, p.id]));
 
   for (const roleDef of SYSTEM_ROLES) {
-    const role = await prisma.role.upsert({
+    const role = await db.role.upsert({
       where: {
         companyId_code: { companyId, code: roleDef.code },
       },
@@ -55,7 +50,7 @@ export async function seedCompanyRoles(companyId: string) {
     const granted = ROLE_PERMISSIONS[roleDef.code];
     const codes = granted === "*" ? [...PERMISSIONS] : [...(granted || [])];
 
-    await prisma.rolePermission.deleteMany({ where: { roleId: role.id } });
+    await db.rolePermission.deleteMany({ where: { roleId: role.id } });
     const data = codes
       .map((code) => byCode.get(code))
       .filter(Boolean)
@@ -64,12 +59,12 @@ export async function seedCompanyRoles(companyId: string) {
         permissionId: permissionId as string,
       }));
     if (data.length) {
-      await prisma.rolePermission.createMany({ data, skipDuplicates: true });
+      await db.rolePermission.createMany({ data, skipDuplicates: true });
     }
   }
 }
 
-export async function seedDefaultCoa(companyId: string) {
+export async function seedDefaultCoa(companyId: string, db: Db = prisma) {
   const accounts = [
     { code: "1100", name: "Kas", type: "ASSET" as const, normalBalance: "DEBIT" },
     { code: "1110", name: "Bank", type: "ASSET" as const, normalBalance: "DEBIT" },
@@ -90,7 +85,7 @@ export async function seedDefaultCoa(companyId: string) {
   ];
 
   for (const a of accounts) {
-    await prisma.account.upsert({
+    await db.account.upsert({
       where: { companyId_code: { companyId, code: a.code } },
       create: { companyId, ...a },
       update: { name: a.name, type: a.type },
@@ -98,7 +93,7 @@ export async function seedDefaultCoa(companyId: string) {
   }
 }
 
-export async function seedDefaultTaxCodes(companyId: string) {
+export async function seedDefaultTaxCodes(companyId: string, db: Db = prisma) {
   const from = new Date("2026-01-01T00:00:00.000Z");
   const codes = [
     {
@@ -128,11 +123,11 @@ export async function seedDefaultTaxCodes(companyId: string) {
   ];
 
   for (const c of codes) {
-    const existing = await prisma.taxCode.findFirst({
+    const existing = await db.taxCode.findFirst({
       where: { companyId, code: c.code, effectiveFrom: from },
     });
     if (!existing) {
-      await prisma.taxCode.create({
+      await db.taxCode.create({
         data: {
           companyId,
           ...c,
@@ -143,7 +138,7 @@ export async function seedDefaultTaxCodes(companyId: string) {
   }
 }
 
-export async function seedPostingRules(companyId: string) {
+export async function seedPostingRules(companyId: string, db: Db = prisma) {
   const rules = [
     {
       code: "GR_POST",
@@ -260,7 +255,7 @@ export async function seedPostingRules(companyId: string) {
   ];
 
   for (const r of rules) {
-    const rule = await prisma.postingRule.upsert({
+    const rule = await db.postingRule.upsert({
       where: { companyId_code: { companyId, code: r.code } },
       create: {
         companyId,
@@ -270,11 +265,11 @@ export async function seedPostingRules(companyId: string) {
       },
       update: { name: r.name, sourceEvent: r.sourceEvent },
     });
-    const versionCount = await prisma.postingRuleVersion.count({
+    const versionCount = await db.postingRuleVersion.count({
       where: { postingRuleId: rule.id },
     });
     if (versionCount === 0) {
-      await prisma.postingRuleVersion.create({
+      await db.postingRuleVersion.create({
         data: {
           postingRuleId: rule.id,
           version: 1,
@@ -304,15 +299,13 @@ export async function onboardCompany(input: OnboardInput) {
   const name = input.name.trim();
   if (!name) throw validationError("Nama perusahaan wajib");
 
-  let code = (input.code || slugify(name) || "CO").slice(0, 12);
+  const code = (input.code || slugify(name) || "CO").slice(0, 12);
   const exists = await prisma.company.findUnique({ where: { code } });
-  if (exists) {
-    code = `${code}${Date.now().toString().slice(-4)}`.slice(0, 12);
-  }
-
-  await ensureGlobalPermissions();
+  // ponytail: duplicates conflict; never suffix a retry into another company or claim an existing owner.
+  if (exists) throw conflict("Kode perusahaan sudah digunakan");
 
   const result = await prisma.$transaction(async (tx) => {
+    await ensureGlobalPermissions(tx);
     const company = await tx.company.create({
       data: {
         code,
@@ -399,39 +392,39 @@ export async function onboardCompany(input: OnboardInput) {
       },
     });
 
-    return { company, branch, warehouse };
-  });
+  await seedCompanyRoles(company.id, tx);
+  await seedDefaultCoa(company.id, tx);
+  await seedDefaultTaxCodes(company.id, tx);
+  await seedPostingRules(company.id, tx);
 
-  await seedCompanyRoles(result.company.id);
-  await seedDefaultCoa(result.company.id);
-  await seedDefaultTaxCodes(result.company.id);
-  await seedPostingRules(result.company.id);
-
-  const ownerRole = await prisma.role.findFirst({
-    where: { companyId: result.company.id, code: "OWNER" },
+  const ownerRole = await tx.role.findFirst({
+    where: { companyId: company.id, code: "OWNER" },
   });
   if (!ownerRole) throw conflict("Role OWNER gagal dibuat");
 
-  await prisma.membership.create({
+  await tx.membership.create({
     data: {
-      companyId: result.company.id,
+      companyId: company.id,
       userId: input.userId,
       roleId: ownerRole.id,
       status: "ACTIVE",
-      branchAccess: { create: [{ branchId: result.branch.id }] },
-      warehouseAccess: { create: [{ warehouseId: result.warehouse.id }] },
+      branchAccess: { create: [{ branchId: branch.id }] },
+      warehouseAccess: { create: [{ warehouseId: warehouse.id }] },
     },
   });
 
-  await writeAudit({
-    companyId: result.company.id,
+  await tx.auditLog.create({ data: {
+    companyId: company.id,
     userId: input.userId,
     action: "company.create",
     entityType: "Company",
-    entityId: result.company.id,
-    entityNumber: result.company.code,
-    afterData: { name: result.company.name, code: result.company.code },
-  });
+    entityId: company.id,
+    entityNumber: company.code,
+    afterData: { name: company.name, code: company.code },
+  } });
+
+    return { company, branch, warehouse };
+  }, { timeout: 30000 });
 
   await setActiveCompanyId(result.company.id);
   return result;

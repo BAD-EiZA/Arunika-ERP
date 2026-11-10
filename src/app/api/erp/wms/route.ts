@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
@@ -11,19 +11,19 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("stock:view");
     const [bins, balances, warehouses, products] = await Promise.all([
       prisma.warehouseBin.findMany({
-        where: { companyId: ctx.companyId },
+        where: { ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}),  companyId: ctx.companyId },
         orderBy: { code: "asc" },
       }),
       prisma.stockBinBalance.findMany({
-        where: { companyId: ctx.companyId },
+        where: { ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}),  companyId: ctx.companyId },
         include: { bin: true },
         take: 100,
       }),
       prisma.warehouse.findMany({
-        where: { companyId: ctx.companyId, isActive: true },
+        where: { ...(ctx.warehouseIds.length ? { id: { in: ctx.warehouseIds } } : {}), ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId, isActive: true },
       }),
       prisma.product.findMany({
         where: { companyId: ctx.companyId, isArchived: false, type: "STOCK" },
@@ -76,6 +76,7 @@ export async function POST(req: Request) {
 
     if (body.action === "putaway") {
       const ctx = await requirePermission("stock:transfer");
+    await assertRequestAccess(ctx, body);
       const bal = await putawayToBin({
         companyId: ctx.companyId,
         warehouseId: String(body.warehouseId ?? ""),
@@ -88,6 +89,7 @@ export async function POST(req: Request) {
 
     if (body.action === "pick") {
       const ctx = await requirePermission("stock:transfer");
+    await assertRequestAccess(ctx, body);
       const bal = await pickFromBin({
         companyId: ctx.companyId,
         binId: String(body.binId ?? ""),
@@ -98,6 +100,7 @@ export async function POST(req: Request) {
     }
 
     const ctx = await requirePermission("warehouse:create");
+    await assertRequestAccess(ctx, body);
     const bin = await createWarehouseBin({
       companyId: ctx.companyId,
       warehouseId: String(body.warehouseId ?? ""),

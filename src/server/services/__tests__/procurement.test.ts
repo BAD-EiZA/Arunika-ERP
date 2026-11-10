@@ -107,7 +107,7 @@ describe("procurement", () => {
             items: [{ id: "poi1", productId: "p1", quantity: "10", quantityReceived: "0", unitPrice: "100" }],
             supplier: { id: "s1", name: "Sup" },
           })),
-          findFirst: jest.fn(),
+          findFirst: jest.fn(async () => ({ id: "po", supplierId: "s" })),
           update: jest.fn(async ({ data }: { data: unknown }) => data),
           item: {},
         },
@@ -118,6 +118,7 @@ describe("procurement", () => {
           update: jest.fn(async () => ({})),
         },
         goodsReceipt: {
+          findMany: jest.fn(async () => []),
           findUnique: jest.fn(async () => null),
           create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({
             id: "gr1",
@@ -246,19 +247,19 @@ describe("procurement", () => {
     prismaMock.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) =>
       fn({
         goodsReceipt: {
+          findMany: jest.fn(async () => []),
           findUnique: jest.fn(async () => ({ id: "exist" })),
         },
       }),
     );
-    const existing = await postGoodsReceipt({
+    await expect(postGoodsReceipt({
       companyId: "c",
       userId: "u",
       purchaseOrderId: "po",
       warehouseId: "w",
       items: [{ productId: "p1", quantityReceived: 1 }],
       idempotencyKey: "k",
-    });
-    expect(existing).toEqual({ id: "exist" });
+    })).rejects.toThrow("Idempotensi");
 
     // empty items
     prismaMock.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) =>
@@ -331,6 +332,7 @@ describe("procurement", () => {
     prismaMock.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) =>
       fn({
         goodsReceipt: {
+          findMany: jest.fn(async () => []),
           findUnique: jest.fn(async () => null),
           create: jest.fn(async () => ({
             id: "gr1",
@@ -464,6 +466,7 @@ describe("procurement", () => {
     prismaMock.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) =>
       fn({
         goodsReceipt: {
+          findMany: jest.fn(async () => []),
           findUnique: jest.fn(async () => null),
           create: jest.fn(async () => ({
             id: "gr1",
@@ -495,6 +498,7 @@ describe("procurement", () => {
     prismaMock.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) =>
       fn({
         goodsReceipt: {
+          findMany: jest.fn(async () => []),
           findUnique: jest.fn(async () => null),
           create: jest.fn(async () => ({
             id: "gr1",
@@ -600,6 +604,8 @@ describe("procurement", () => {
         supplierBill: {
           findFirst: jest.fn(async () => ({
             id: "b1",
+            supplierId: "s",
+            status: "OPEN",
             balance: "50",
             amountPaid: "0",
             total: "50",
@@ -626,6 +632,8 @@ describe("procurement", () => {
         supplierBill: {
           findFirst: jest.fn(async () => ({
             id: "b1",
+            supplierId: "s",
+            status: "OPEN",
             balance: "100",
             amountPaid: "0",
             total: "100",
@@ -654,6 +662,8 @@ describe("procurement", () => {
         supplierBill: {
           findFirst: jest.fn(async () => ({
             id: "b1",
+            supplierId: "s",
+            status: "OPEN",
             balance: "100",
             amountPaid: "0",
             total: "100",
@@ -748,6 +758,7 @@ describe("procurement", () => {
     // award not found
     prismaMock.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) =>
       fn({
+        requestForQuotation: { findFirst: jest.fn(async () => ({ id: "rfq1", status: "SENT" })) },
         vendorQuotation: {
           findFirst: jest.fn(async () => null),
         },
@@ -777,7 +788,7 @@ describe("procurement", () => {
           updateMany: jest.fn(async () => ({})),
           update: jest.fn(async () => ({})),
         },
-        requestForQuotation: { update: jest.fn(async () => ({})) },
+        requestForQuotation: { findFirst: jest.fn(async () => ({ id: "rfq1", status: "SENT" })), update: jest.fn(async () => ({})) },
       }),
     );
     const awardedEmpty = await awardRfq({
@@ -811,7 +822,7 @@ describe("procurement", () => {
           updateMany: jest.fn(async () => ({})),
           update: jest.fn(async () => ({})),
         },
-        requestForQuotation: { update: jest.fn(async () => ({})) },
+        requestForQuotation: { findFirst: jest.fn(async () => ({ id: "rfq1", status: "SENT" })), update: jest.fn(async () => ({})) },
         purchaseOrder: {
           create: jest.fn(async () => ({ id: "po2", number: "PO/2", items: [] })),
         },
@@ -841,10 +852,15 @@ describe("procurement", () => {
     prismaMock.goodsReceipt.findFirst.mockResolvedValue({
       id: "gr",
       purchaseOrderId: "po",
+      supplierId: "s",
+      status: "POSTED",
       items: [{ quantityReceived: "10", unitCost: "10" }],
     });
     prismaMock.supplierBill.findFirst.mockResolvedValue({
       id: "sb",
+      supplierId: "s",
+      purchaseOrderId: "po",
+      status: "OPEN",
       subtotal: "100",
       items: [{ quantity: "10" }],
     });
@@ -861,10 +877,15 @@ describe("procurement", () => {
     prismaMock.goodsReceipt.findFirst.mockResolvedValue({
       id: "gr",
       purchaseOrderId: "po",
+      supplierId: "s",
+      status: "POSTED",
       items: [{ quantityReceived: "5", unitCost: "10" }],
     });
     prismaMock.supplierBill.findFirst.mockResolvedValue({
       id: "sb",
+      supplierId: "s",
+      purchaseOrderId: "po",
+      status: "OPEN",
       subtotal: "200",
       items: [{ quantity: "10" }],
     });

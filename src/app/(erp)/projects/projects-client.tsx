@@ -42,6 +42,9 @@ type ProjectsData = {
     budgetAmount: string;
     actualCost: string;
     billedAmount: string;
+    invoices: Array<{ id: string; number: string; total: string; status: string }>;
+    billings: Array<{ sourceType: string; sourceId: string }>;
+    customerId: string | null;
     managerName: string | null;
     tasks: Array<{
       id: string;
@@ -49,6 +52,8 @@ type ProjectsData = {
       name: string;
       plannedHours: string;
       actualHours: string;
+      billableAmount: string;
+      status: string;
     }>;
     timesheets: Array<{
       id: string;
@@ -178,6 +183,21 @@ export function ProjectsClient() {
             </div>
 
             <MutationError error={mutation.error} />
+            <Card title="Billing proposal / invoice project">
+              {projects.map((p) => <section key={p.id} className="space-y-2 border-b py-3">
+                <h3 className="font-medium">{p.code} — {p.name} · Billed {formatIdr(p.billedAmount)}</h3>
+                {p.tasks.filter((t) => t.status !== "CLOSED").map((t) => <Button key={t.id} disabled={mutation.isPending} onClick={() => mutation.mutate({ action: "complete_task", projectId: p.id, taskId: t.id })}>Selesaikan milestone/task: {t.name}</Button>)}
+                <form className="flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); const f = formToObject(e.currentTarget); const [sourceType, sourceId] = f.source.split(":"); mutation.mutate({ action: "bill", projectId: p.id, sourceType, sourceId, hourlyRate: f.hourlyRate, idempotencyKey: `project:${p.id}:${sourceType}:${sourceId}` }); }}>
+                  <Field label="Proposal sumber belum ditagih"><Select name="source" required><option value="">Pilih sumber</option>
+                    {p.tasks.filter((t) => ["CLOSED", "APPROVED"].includes(t.status) && Number(t.billableAmount) > 0 && !p.billings.some((b) => b.sourceType === "task" && b.sourceId === t.id)).map((t) => <option key={t.id} value={`task:${t.id}`}>{t.name} — {formatIdr(t.billableAmount)}</option>)}
+                    {p.timesheets.filter((t) => ["APPROVED", "POSTED"].includes(t.status) && !p.billings.some((b) => b.sourceType === "timesheet" && b.sourceId === t.id)).map((t) => <option key={t.id} value={`timesheet:${t.id}`}>Timesheet {t.workDate.slice(0, 10)} — {t.hours} jam</option>)}
+                  </Select></Field>
+                  <Field label="Tarif per jam (timesheet)"><Input name="hourlyRate" type="number" min="0" step="0.01" defaultValue="0" /></Field>
+                  <Button disabled={mutation.isPending || !p.customerId}>Generate invoice</Button>
+                </form>
+                <Table headers={["Invoice", "Status", "Nilai"]}><tbody>{p.invoices.map((i) => <tr key={i.id}><td>{i.number}</td><td>{i.status}</td><td>{formatIdr(i.total)}</td></tr>)}</tbody></Table>
+              </section>)}
+            </Card>
 
             {formMode === "project" ? (
               <Card title="Buat project">
@@ -292,7 +312,8 @@ export function ProjectsClient() {
                       <Field label="Nama task">
                         <Input name="name" required />
                       </Field>
-                      <Field label="Planned hours">
+                      <Field label="Nilai milestone/task"><Input name="billableAmount" type="number" min="0" step="0.01" defaultValue="0" /></Field>
+                    <Field label="Planned hours">
                         <Input
                           name="plannedHours"
                           type="number"

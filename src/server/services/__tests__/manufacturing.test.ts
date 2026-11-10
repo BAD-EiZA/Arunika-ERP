@@ -6,8 +6,10 @@ import {
 } from "@/server/services/manufacturing";
 
 const prismaMock = {
+  product: { findMany: jest.fn(async () => [{ id: "fg" }, { id: "rm" }]) },
   workCenter: { create: jest.fn() },
   billOfMaterials: { create: jest.fn() },
+  productionCostEntry: { aggregate: jest.fn(async () => ({ _sum: { amount: "0" } })) },
   productionOrder: {
     findFirst: jest.fn(),
     update: jest.fn(),
@@ -119,7 +121,7 @@ describe("manufacturing", () => {
 
     prismaMock.productionOrder.findFirst.mockResolvedValue({
       id: "o1",
-      status: "COMPLETED",
+      status: "COMPLETED", totalCost: "0", plannedQty: "10", completedQty: "10", materials: [],
     });
     prismaMock.productionOrder.update.mockResolvedValue({
       id: "o1",

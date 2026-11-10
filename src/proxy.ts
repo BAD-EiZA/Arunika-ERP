@@ -4,6 +4,9 @@ import type { NextRequest } from "next/server";
 
 export default withAuth(
   async function proxy(req: NextRequest) {
+    if (process.env.MOCK_AUTH === "true" && process.env.NODE_ENV === "production") {
+      return new NextResponse("Konfigurasi auth tidak valid", { status: 500 });
+    }
     const requestHeaders = new Headers(req.headers);
     requestHeaders.set("x-pathname", req.nextUrl.pathname);
     return NextResponse.next({

@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("journal:view");
     const [journals, invoices, customers] = await Promise.all([
       prisma.recurringJournal.findMany({
         where: { companyId: ctx.companyId },
@@ -85,6 +85,7 @@ export async function POST(req: Request) {
 
     if (body.action === "run") {
       const ctx = await requirePermission("journal:post");
+    await assertRequestAccess(ctx, body);
       const results = await runDueRecurring({
         companyId: ctx.companyId,
         userId: ctx.user.id,
@@ -94,6 +95,7 @@ export async function POST(req: Request) {
 
     if (body.action === "toggle") {
       const ctx = await requirePermission("journal:create");
+    await assertRequestAccess(ctx, body);
       const row = await setRecurringActive(
         ctx.companyId,
         body.kind === "invoice" ? "invoice" : "journal",
@@ -105,6 +107,7 @@ export async function POST(req: Request) {
 
     if (body.action === "create_invoice") {
       const ctx = await requirePermission("invoice:create");
+    await assertRequestAccess(ctx, body);
       const row = await createRecurringInvoice({
         companyId: ctx.companyId,
         customerId: String(body.customerId ?? ""),
@@ -127,6 +130,7 @@ export async function POST(req: Request) {
     }
 
     const ctx = await requirePermission("journal:create");
+    await assertRequestAccess(ctx, body);
     const row = await createRecurringJournal({
       companyId: ctx.companyId,
       name: String(body.name ?? ""),

@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requireIdempotencyKey, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import { issueInvoiceFromDelivery } from "@/server/services/sales";
@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("invoice:view");
     const [invoices, deliveries] = await Promise.all([
       prisma.salesInvoice.findMany({
         where: { companyId: ctx.companyId },
@@ -15,7 +15,7 @@ export async function GET() {
         orderBy: { createdAt: "desc" },
       }),
       prisma.deliveryOrder.findMany({
-        where: { companyId: ctx.companyId, status: "POSTED" },
+        where: { ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}),  companyId: ctx.companyId, status: "POSTED" },
         include: { customer: true, salesInvoices: true },
         orderBy: { createdAt: "desc" },
       }),
@@ -45,6 +45,7 @@ export async function GET() {
 export async function POST(req: Request) {
   return withApiHandler(async () => {
     const ctx = await requirePermission("invoice:issue");
+    const idempotencyKey = requireIdempotencyKey(req);
     const body = (await req.json()) as {
       deliveryOrderId?: string;
       taxRate?: string | number;
@@ -52,6 +53,7 @@ export async function POST(req: Request) {
       exchangeRate?: string | number;
       installments?: number;
     };
+    await assertRequestAccess(ctx, body);
     const result = await issueInvoiceFromDelivery({
       companyId: ctx.companyId,
       userId: ctx.user.id,
@@ -60,6 +62,7 @@ export async function POST(req: Request) {
       currency: body.currency,
       exchangeRate: body.exchangeRate,
       installments: body.installments,
+      idempotencyKey,
     });
     const list = Array.isArray(result) ? result : [result];
     return {

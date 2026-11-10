@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission, requireTenant } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("production_order:view");
     const [
       workCenters,
       boms,
@@ -45,7 +45,7 @@ export async function GET() {
         orderBy: { createdAt: "desc" },
       }),
       prisma.productionOrder.findMany({
-        where: { companyId: ctx.companyId },
+        where: { ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}),  companyId: ctx.companyId },
         include: {
           finishedProduct: true,
           materials: true,
@@ -57,7 +57,7 @@ export async function GET() {
         where: { companyId: ctx.companyId, isArchived: false },
       }),
       prisma.warehouse.findMany({
-        where: { companyId: ctx.companyId, isActive: true },
+        where: { ...(ctx.warehouseIds.length ? { id: { in: ctx.warehouseIds } } : {}), ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId, isActive: true },
       }),
     ]);
 
@@ -192,6 +192,7 @@ export async function POST(req: Request) {
 
     if (body.action === "work_center") {
       const ctx = await requirePermission("work_center:manage");
+    await assertRequestAccess(ctx, body);
       const wc = await createWorkCenter({
         companyId: ctx.companyId,
         code: String(body.code ?? ""),
@@ -203,6 +204,7 @@ export async function POST(req: Request) {
 
     if (body.action === "bom") {
       const ctx = await requirePermission("bom:manage");
+    await assertRequestAccess(ctx, body);
       const bom = await createBom({
         companyId: ctx.companyId,
         code: String(body.code ?? ""),
@@ -217,6 +219,7 @@ export async function POST(req: Request) {
 
     if (body.action === "routing") {
       const ctx = await requirePermission("routing:manage");
+    await assertRequestAccess(ctx, body);
       const routing = await createRouting({
         companyId: ctx.companyId,
         code: String(body.code ?? ""),
@@ -229,6 +232,7 @@ export async function POST(req: Request) {
 
     if (body.action === "create_order") {
       const ctx = await requirePermission("production_order:create");
+    await assertRequestAccess(ctx, body);
       const order = await createProductionOrder({
         companyId: ctx.companyId,
         userId: ctx.user.id,
@@ -250,6 +254,7 @@ export async function POST(req: Request) {
 
     if (body.action === "release") {
       const ctx = await requirePermission("production_order:release");
+    await assertRequestAccess(ctx, body);
       const order = await releaseProductionOrder(
         ctx.companyId,
         ctx.user.id,
@@ -260,6 +265,7 @@ export async function POST(req: Request) {
 
     if (body.action === "issue") {
       const ctx = await requirePermission("production_order:report");
+    await assertRequestAccess(ctx, body);
       const result = await issueProductionMaterials({
         companyId: ctx.companyId,
         userId: ctx.user.id,
@@ -272,6 +278,7 @@ export async function POST(req: Request) {
 
     if (body.action === "labor") {
       const ctx = await requirePermission("production_order:report");
+    await assertRequestAccess(ctx, body);
       return reportProductionLabor({
         companyId: ctx.companyId,
         productionOrderId: String(body.id ?? ""),
@@ -282,11 +289,13 @@ export async function POST(req: Request) {
 
     if (body.action === "costing") {
       const ctx = await requirePermission("production_order:view");
+    await assertRequestAccess(ctx, body);
       return getProductionCosting(ctx.companyId, String(body.id ?? ""));
     }
 
     if (body.action === "complete") {
       const ctx = await requirePermission("production_order:report");
+    await assertRequestAccess(ctx, body);
       const order = await completeProductionOrder({
         companyId: ctx.companyId,
         userId: ctx.user.id,
@@ -308,6 +317,7 @@ export async function POST(req: Request) {
 
     if (body.action === "close") {
       const ctx = await requirePermission("production_order:close");
+    await assertRequestAccess(ctx, body);
       const order = await closeProductionOrder(
         ctx.companyId,
         ctx.user.id,

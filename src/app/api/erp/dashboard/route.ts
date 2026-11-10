@@ -1,4 +1,4 @@
-import { requireTenant } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 
@@ -20,7 +20,7 @@ function lastNMonths(n: number) {
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("report:view");
     const companyId = ctx.companyId;
     const months = lastNMonths(6);
     const from = new Date(`${months[0]}-01T00:00:00.000Z`);

@@ -9,7 +9,8 @@ import {
 import { ROLE_PERMISSIONS, SYSTEM_ROLES } from "@/lib/permissions";
 
 const prismaMock = {
-  permission: { upsert: jest.fn() },
+  permission: { upsert: jest.fn(), findMany: jest.fn() },
+  auditLog: { create: jest.fn() },
   role: {
     upsert: jest.fn(),
     findFirst: jest.fn(),
@@ -72,6 +73,7 @@ describe("onboarding", () => {
     prismaMock.membership.create.mockResolvedValue({});
     prismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => {
       const tx = {
+        ...prismaMock,
         company: {
           create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({
             id: "co1",
@@ -102,7 +104,12 @@ describe("onboarding", () => {
         taxRegistration: { create: jest.fn(async () => ({})) },
         bankAccount: { create: jest.fn(async () => ({})) },
       };
-      return fn(tx);
+      const result = await fn(tx);
+      expect(prismaMock.membership.create).toHaveBeenCalled();
+      expect(prismaMock.account.upsert).toHaveBeenCalled();
+      expect(prismaMock.taxCode.create).toHaveBeenCalled();
+      expect(prismaMock.postingRuleVersion.create).toHaveBeenCalled();
+      return result;
     });
   });
 
@@ -191,6 +198,7 @@ describe("onboarding", () => {
     });
     expect(result.company.id).toBe("co1");
     expect(prismaMock.membership.create).toHaveBeenCalled();
+    expect(prismaMock.membership.create.mock.invocationCallOrder[0]).toBeLessThan(prismaMock.$transaction.mock.results[0].value ? Number.MAX_SAFE_INTEGER : 0);
   });
 
   it("onboardCompany handles existing code and slug fallback", async () => {
@@ -201,8 +209,8 @@ describe("onboarding", () => {
       })),
     );
     prismaMock.company.findUnique.mockResolvedValueOnce({ id: "exists" });
-    const r = await onboardCompany({ userId: "u", name: "Acme Corp!!!" });
-    expect(r.company.id).toBe("co1");
+    await expect(onboardCompany({ userId: "u", name: "Acme Corp!!!" })).rejects.toThrow("Kode perusahaan sudah digunakan");
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 
   it("onboardCompany throws when owner role missing", async () => {
@@ -211,6 +219,20 @@ describe("onboarding", () => {
     await expect(
       onboardCompany({ userId: "u", name: "X" }),
     ).rejects.toThrow("Role OWNER gagal dibuat");
+  });
+
+  it("rejects the transaction when membership fails", async () => {
+    prismaMock.membership.create.mockRejectedValueOnce(new Error("membership failed"));
+    await expect(onboardCompany({ userId: "u", name: "Rollback" })).rejects.toThrow("membership failed");
+    await expect(prismaMock.$transaction.mock.results[0].value).rejects.toThrow("membership failed");
+    expect(prismaMock.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects the transaction when COA seeding fails", async () => {
+    prismaMock.account.upsert.mockRejectedValueOnce(new Error("seed failed"));
+    await expect(onboardCompany({ userId: "u", name: "Rollback" })).rejects.toThrow("seed failed");
+    await expect(prismaMock.$transaction.mock.results[0].value).rejects.toThrow("seed failed");
+    expect(prismaMock.membership.create).not.toHaveBeenCalled();
   });
 
   it("onboardCompany uses defaults for optional fields", async () => {

@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/db";
-import { forbidden, unauthorized } from "@/lib/errors";
+import { forbidden, unauthorized, validationError } from "@/lib/errors";
 import {
   hasPermission,
   type PermissionCode,
@@ -28,6 +28,7 @@ const COMPANY_COOKIE = "arunika_company_id";
 
 export async function getSessionUser(): Promise<SessionUser | null> {
   if (process.env.MOCK_AUTH === "true") {
+    if (process.env.NODE_ENV === "production") return null;
     const email = process.env.MOCK_USER_EMAIL || "owner@arunika.local";
     const name = process.env.MOCK_USER_NAME || "Owner Demo";
     let user = await prisma.user.findUnique({ where: { email } });
@@ -149,10 +150,11 @@ export async function getTenantContext(
 
   if (memberships.length === 0) return null;
 
-  const membership =
-    memberships.find((m) => m.companyId === activeCompanyId) ?? memberships[0];
+  const membership = activeCompanyId
+    ? memberships.find((m) => m.companyId === activeCompanyId)
+    : memberships[0];
 
-  if (!membership.company.isActive) return null;
+  if (!membership?.company.isActive) return null;
 
   let permissions: Set<string> | "*";
   const roleMap = ROLE_PERMISSIONS[membership.role.code];
@@ -194,6 +196,57 @@ export async function requirePermission(
     throw forbidden("Permission tidak mencukupi");
   }
   return ctx;
+}
+
+export function requireIdempotencyKey(req: Request): string {
+  const key = req.headers.get("Idempotency-Key");
+  if (!key || !/^[A-Za-z0-9._:-]{1,200}$/.test(key)) {
+    throw validationError("Idempotency-Key wajib diisi (maksimal 200 karakter)");
+  }
+  return key;
+}
+
+export async function assertResourceAccess(
+  ctx: TenantContext,
+  model: "product" | "customer" | "supplier" | "warehouse" | "branch" | "employee" | "bankAccount" | "purchaseOrder" | "salesOrder" | "deliveryOrder" | "salesInvoice" | "supplierBill" | "goodsReceipt" | "purchaseRequest" | "fiscalPeriod" | "fixedAsset" | "taxDocument",
+  id: unknown,
+): Promise<void> {
+  if (typeof id !== "string" || !id) throw validationError("ID tidak valid");
+  if (model === "warehouse" && ctx.warehouseIds.length && !ctx.warehouseIds.includes(id)) throw forbidden();
+  if (model === "branch" && ctx.branchIds.length && !ctx.branchIds.includes(id)) throw forbidden();
+  // The union of Prisma delegates has incompatible overloads; all share this findFirst shape.
+  const delegate = prisma[model] as unknown as { findFirst: (args: { where: { id: string; companyId: string } }) => Promise<unknown> };
+  const row = await delegate.findFirst({ where: { id, companyId: ctx.companyId } });
+  if (!row) throw forbidden("Referensi di luar perusahaan");
+  const scoped = row as { branchId?: string | null; warehouseId?: string | null };
+  if (scoped.branchId && ctx.branchIds.length && !ctx.branchIds.includes(scoped.branchId)) throw forbidden();
+  if (scoped.warehouseId && ctx.warehouseIds.length && !ctx.warehouseIds.includes(scoped.warehouseId)) throw forbidden();
+}
+
+export async function assertRequestAccess(ctx: TenantContext, body: unknown): Promise<void> {
+  const references = {
+    productId: "product", customerId: "customer", supplierId: "supplier",
+    warehouseId: "warehouse", branchId: "branch", employeeId: "employee",
+    bankAccountId: "bankAccount", purchaseOrderId: "purchaseOrder",
+    salesOrderId: "salesOrder", deliveryOrderId: "deliveryOrder", goodsReceiptId: "goodsReceipt",
+    invoiceId: "salesInvoice", billId: "supplierBill",
+    purchaseRequestId: "purchaseRequest", periodId: "fiscalPeriod",
+  } as const;
+  async function visit(value: unknown, depth: number): Promise<void> {
+    if (depth > 4 || !value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      for (const item of value) await visit(item, depth + 1);
+      return;
+    }
+    for (const [key, ref] of Object.entries(value)) {
+      if (key in references && ref != null && ref !== "") {
+        await assertResourceAccess(ctx, references[key as keyof typeof references], ref);
+      } else if (Array.isArray(ref)) {
+        await visit(ref, depth + 1);
+      }
+    }
+  }
+  await visit(body, 0);
 }
 
 export async function listUserCompanies(userId: string) {

@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requireIdempotencyKey, assertResourceAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import { postDeliveryOrder } from "@/server/services/sales";
@@ -7,10 +7,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("delivery_order:view");
     const [deliveries, openSos, warehouses] = await Promise.all([
       prisma.deliveryOrder.findMany({
-        where: { companyId: ctx.companyId },
+        where: { ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}),  companyId: ctx.companyId },
         include: {
           customer: true,
           items: { include: { product: true } },
@@ -20,6 +20,8 @@ export async function GET() {
       }),
       prisma.salesOrder.findMany({
         where: {
+          ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}),
+          ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}),
           companyId: ctx.companyId,
           status: { in: ["APPROVED", "CONFIRMED", "PARTIALLY_DELIVERED"] },
         },
@@ -30,7 +32,7 @@ export async function GET() {
         orderBy: { createdAt: "desc" },
       }),
       prisma.warehouse.findMany({
-        where: { companyId: ctx.companyId, isActive: true },
+        where: { ...(ctx.warehouseIds.length ? { id: { in: ctx.warehouseIds } } : {}), ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId, isActive: true },
       }),
     ]);
 
@@ -75,8 +77,13 @@ export async function POST(req: Request) {
       notes?: string;
       items?: Array<{ productId: string; quantityDelivered: string | number }>;
     };
+    await assertRequestAccess(ctx, body);
 
+    await assertResourceAccess(ctx, "warehouse", body.warehouseId);
+    await assertResourceAccess(ctx, "salesOrder", body.salesOrderId);
+    const idempotencyKey = requireIdempotencyKey(req);
     const delivery = await postDeliveryOrder({
+      idempotencyKey,
       companyId: ctx.companyId,
       userId: ctx.user.id,
       salesOrderId: String(body.salesOrderId ?? ""),

@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("rfq:view");
     const [rfqs, suppliers, products, prs, warehouses, branches, quotations] =
       await Promise.all([
         prisma.requestForQuotation.findMany({
@@ -29,13 +29,13 @@ export async function GET() {
           where: { companyId: ctx.companyId, isArchived: false },
         }),
         prisma.purchaseRequest.findMany({
-          where: { companyId: ctx.companyId, status: "APPROVED" },
+          where: { ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId, status: "APPROVED" },
         }),
         prisma.warehouse.findMany({
-          where: { companyId: ctx.companyId, isActive: true },
+          where: { ...(ctx.warehouseIds.length ? { id: { in: ctx.warehouseIds } } : {}), ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId, isActive: true },
         }),
         prisma.branch.findMany({
-          where: { companyId: ctx.companyId, isActive: true },
+          where: { ...(ctx.branchIds.length ? { id: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId, isActive: true },
         }),
         prisma.vendorQuotation.findMany({
           where: { companyId: ctx.companyId },
@@ -108,6 +108,7 @@ export async function POST(req: Request) {
 
     if (body.action === "quotation") {
       const ctx = await requirePermission("rfq:create");
+    await assertRequestAccess(ctx, body);
       const q = await submitVendorQuotation({
         companyId: ctx.companyId,
         rfqId: String(body.rfqId ?? ""),
@@ -119,6 +120,7 @@ export async function POST(req: Request) {
 
     if (body.action === "award") {
       const ctx = await requirePermission("rfq:award");
+    await assertRequestAccess(ctx, body);
       const result = await awardRfq({
         companyId: ctx.companyId,
         userId: ctx.user.id,
@@ -139,6 +141,7 @@ export async function POST(req: Request) {
     }
 
     const ctx = await requirePermission("rfq:create");
+    await assertRequestAccess(ctx, body);
     const rfq = await createRfq({
       companyId: ctx.companyId,
       purchaseRequestId: body.purchaseRequestId || undefined,

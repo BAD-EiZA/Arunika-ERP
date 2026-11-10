@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import { reviewThreeWayMatch } from "@/server/services/procurement";
@@ -7,14 +7,14 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("three_way_match:review");
     const [matches, receipts, bills] = await Promise.all([
       prisma.threeWayMatch.findMany({
         where: { companyId: ctx.companyId },
         orderBy: { createdAt: "desc" },
       }),
       prisma.goodsReceipt.findMany({
-        where: { companyId: ctx.companyId, status: "POSTED" },
+        where: { ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}),  companyId: ctx.companyId, status: "POSTED" },
         include: { supplier: true },
       }),
       prisma.supplierBill.findMany({
@@ -52,6 +52,7 @@ export async function POST(req: Request) {
       goodsReceiptId?: string;
       supplierBillId?: string;
     };
+    await assertRequestAccess(ctx, body);
     const match = await reviewThreeWayMatch({
       companyId: ctx.companyId,
       userId: ctx.user.id,

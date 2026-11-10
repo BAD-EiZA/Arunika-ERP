@@ -1,6 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { hashKey } from "@tanstack/react-query";
+import { makeKey } from "@/lib/query-keys";
+
+export function createTenantQueryClient(companyId: string) {
+  return new QueryClient({ defaultOptions: { queries: {
+    queryKeyHashFn: key => hashKey(makeKey(companyId, ...key)),
+    staleTime: 30_000, gcTime: 300_000, refetchOnWindowFocus: false, retry: 1,
+  }, mutations: { retry: 0 } } });
+}
+
+export function TenantQueryProvider({ companyId, children }: { companyId: string; children: React.ReactNode }) {
+  const [client] = useState(() => createTenantQueryClient(companyId));
+  useEffect(() => () => { client.clear(); }, [client]);
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+}
 import {
   QueryClient,
   QueryClientProvider,

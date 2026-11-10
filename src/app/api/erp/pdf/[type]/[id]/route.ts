@@ -1,7 +1,8 @@
-import { requireTenant } from "@/lib/auth";
+import { requirePermission, assertResourceAccess } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { formatDateId } from "@/lib/dates";
 import { formatIdr } from "@/lib/money";
+import { AppError } from "@/lib/errors";
 import { buildSimplePdf } from "@/lib/pdf";
 
 export const dynamic = "force-dynamic";
@@ -11,8 +12,17 @@ export async function GET(
   ctx: { params: Promise<{ type: string; id: string }> },
 ) {
   try {
-    const tenant = await requireTenant();
     const { type, id } = await ctx.params;
+    const policies = {
+      invoice: ["invoice:view", "salesInvoice"],
+      po: ["purchase_order:view", "purchaseOrder"],
+      so: ["sales_order:view", "salesOrder"],
+      do: ["delivery_order:view", "deliveryOrder"],
+    } as const;
+    const policy = policies[type as keyof typeof policies];
+    if (!policy) return new Response("Unknown type", { status: 400 });
+    const tenant = await requirePermission(policy[0]);
+    await assertResourceAccess(tenant, policy[1], id);
     const company = await prisma.company.findUnique({
       where: { id: tenant.companyId },
     });
@@ -131,7 +141,7 @@ export async function GET(
   } catch (error) {
     return new Response(
       error instanceof Error ? error.message : "PDF error",
-      { status: 400 },
+      { status: error instanceof AppError ? error.status : 400 },
     );
   }
 }

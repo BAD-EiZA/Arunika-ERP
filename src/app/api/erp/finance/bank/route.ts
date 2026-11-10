@@ -1,9 +1,10 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
   createBankAccount,
   importBankStatement,
+  listReconcilableLines,
   reconcileStatementLine,
   syncBankFeed,
   unreconcileStatementLine,
@@ -14,8 +15,8 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
-    const [accounts, glAccounts] = await Promise.all([
+    const ctx = await requirePermission("bank_account:view");
+    const [accounts, glAccounts, journalLines] = await Promise.all([
       prisma.bankAccount.findMany({
         where: { companyId: ctx.companyId },
         include: {
@@ -30,8 +31,10 @@ export async function GET() {
         where: { companyId: ctx.companyId, isActive: true, type: "ASSET" },
         orderBy: { code: "asc" },
       }),
+      listReconcilableLines(ctx.companyId),
     ]);
     return {
+      journalLines,
       accounts: accounts.map((a) => ({
         id: a.id,
         code: a.code,
@@ -98,15 +101,17 @@ export async function POST(req: Request) {
 
     if (body.action === "reconcile") {
       const ctx = await requirePermission("bank_reconciliation:perform");
+    await assertRequestAccess(ctx, body);
       const line = await reconcileStatementLine(
         ctx.companyId,
         String(body.lineId ?? ""),
-        String(body.matchedRef ?? "MATCHED"),
+        String(body.matchedRef ?? "").trim(),
       );
       return { line: { id: line.id, isReconciled: line.isReconciled } };
     }
     if (body.action === "unreconcile") {
       const ctx = await requirePermission("bank_reconciliation:perform");
+    await assertRequestAccess(ctx, body);
       const line = await unreconcileStatementLine(
         ctx.companyId,
         String(body.lineId ?? ""),
@@ -115,6 +120,7 @@ export async function POST(req: Request) {
     }
     if (body.action === "feed_sync") {
       const ctx = await requirePermission("bank_reconciliation:perform");
+    await assertRequestAccess(ctx, body);
       const lines =
         body.lines && body.lines.length
           ? body.lines.map((l) => ({
@@ -146,6 +152,7 @@ export async function POST(req: Request) {
     }
     if (body.action === "import") {
       const ctx = await requirePermission("bank_reconciliation:perform");
+    await assertRequestAccess(ctx, body);
       const lines =
         body.lines && body.lines.length
           ? body.lines.map((l) => ({
@@ -172,6 +179,7 @@ export async function POST(req: Request) {
     }
     if (body.action === "update") {
       const ctx = await requirePermission("bank_account:manage");
+    await assertRequestAccess(ctx, body);
       const bank = await updateBankAccount({
         companyId: ctx.companyId,
         id: String(body.id ?? ""),
@@ -185,6 +193,7 @@ export async function POST(req: Request) {
     }
 
     const ctx = await requirePermission("bank_account:manage");
+    await assertRequestAccess(ctx, body);
     const bank = await createBankAccount({
       companyId: ctx.companyId,
       code: String(body.code ?? ""),

@@ -9,7 +9,6 @@ import {
   Card,
   EmptyState,
   Field,
-  FormGrid,
   Input,
   ListPageShell,
   PageHeader,
@@ -18,6 +17,7 @@ import {
 import { QueryBoundary } from "@/components/query-state";
 import { apiGet } from "@/lib/api-client";
 import { formatIdr } from "@/lib/money";
+import { OperationalReports } from "./operational-client";
 
 type FsData = {
   trialBalance: {
@@ -200,6 +200,7 @@ export function ReportsClient() {
 
       <AppTabs
         items={[
+          { id: "operational", title: "Operasional", content: <OperationalReports /> },
           {
             id: "fs",
             title: "Laporan FS",

@@ -221,10 +221,12 @@ model Company {
   routings          Routing[]
   productionOrders  ProductionOrder[]
   mrpRuns           MrpRun[]
-  employees         Employee[]
+  employees          Employee[]
+  payrollPolicies    PayrollPolicy[]
+  payrollRuns        PayrollRun[]
+  payrollProfiles    EmployeePayrollProfile[]
   attendanceRecords AttendanceRecord[]
   leaveRequests     LeaveRequest[]
-  payrollRuns       PayrollRun[]
   salesReturns      SalesReturn[]
   purchaseReturns   PurchaseReturn[]
   claims            Claim[]
@@ -926,6 +928,8 @@ model PurchaseContract {
   endDate       DateTime?
   ceilingAmount Decimal?       @db.Decimal(18, 2)
   usedAmount    Decimal        @default(0) @db.Decimal(18, 2)
+  version       Int            @default(1)
+  isActive      Boolean        @default(true)
   notes         String?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
@@ -945,6 +949,9 @@ model PurchaseContractItem {
   productId  String
   quantity   Decimal? @db.Decimal(18, 4)
   unitPrice  Decimal  @db.Decimal(18, 4)
+  ceilingAmount Decimal @default(0) @db.Decimal(18, 2)
+  usedQuantity Decimal @default(0) @db.Decimal(18, 4)
+  usedAmount Decimal @default(0) @db.Decimal(18, 2)
 
   contract PurchaseContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
   product  Product          @relation(fields: [productId], references: [id])
@@ -959,6 +966,8 @@ model PurchaseOrder {
   branchId        String?
   warehouseId     String?
   contractId      String?
+  idempotencyKey  String?
+  requestHash     String?
   number          String
   status          DocumentStatus @default(DRAFT)
   orderDate       DateTime       @default(now())
@@ -988,6 +997,7 @@ model PurchaseOrder {
   goodsReceipts GoodsReceipt[]
   supplierBills SupplierBill[]
 
+  @@unique([companyId, idempotencyKey])
   @@unique([companyId, number])
   @@index([companyId])
   @@index([supplierId])
@@ -1025,6 +1035,7 @@ model GoodsReceipt {
   postedAt             DateTime?
   createdById          String?
   idempotencyKey       String?
+  requestHash String?
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt
 
@@ -1085,6 +1096,7 @@ model SupplierBill {
   allocations   SupplierPaymentAllocation[]
   matches       ThreeWayMatch[]
 
+  @@unique([companyId, supplierId, supplierInvoiceNo])
   @@unique([companyId, number])
   @@index([companyId])
   @@index([supplierId])
@@ -1118,6 +1130,8 @@ model SupplierPayment {
   bankAccountId String?
   amount        Decimal        @db.Decimal(18, 2)
   reference     String?
+  idempotencyKey String?
+  requestHash    String?
   notes         String?
   postedAt      DateTime?
   createdById   String?
@@ -1129,6 +1143,7 @@ model SupplierPayment {
   allocations SupplierPaymentAllocation[]
 
   @@unique([companyId, number])
+  @@unique([companyId, idempotencyKey])
   @@index([companyId])
 }
 
@@ -1266,6 +1281,7 @@ model DeliveryOrder {
   postedAt       DateTime?
   createdById    String?
   idempotencyKey String?
+  requestHash String?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
@@ -1301,6 +1317,9 @@ model SalesInvoice {
   customerId      String
   salesOrderId    String?
   deliveryOrderId String?
+  projectId       String?
+  project         Project? @relation(fields: [projectId], references: [id])
+  projectBilling  ProjectBilling?
   number          String
   status          DocumentStatus @default(DRAFT)
   invoiceDate     DateTime       @default(now())
@@ -1317,6 +1336,8 @@ model SalesInvoice {
   notes           String?
   installmentOf   Int?
   installmentNo   Int?
+  idempotencyKey  String?
+  requestHash     String?
   issuedAt        DateTime?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
@@ -1329,6 +1350,7 @@ model SalesInvoice {
   allocations   CustomerPaymentAllocation[]
 
   @@unique([companyId, number])
+  @@unique([companyId, idempotencyKey])
   @@index([companyId])
   @@index([customerId])
   @@index([dueDate])
@@ -1361,6 +1383,8 @@ model CustomerPayment {
   bankAccountId String?
   amount        Decimal        @db.Decimal(18, 2)
   reference     String?
+  idempotencyKey String?
+  requestHash    String?
   notes         String?
   postedAt      DateTime?
   createdById   String?
@@ -1372,6 +1396,7 @@ model CustomerPayment {
   allocations CustomerPaymentAllocation[]
 
   @@unique([companyId, number])
+  @@unique([companyId, idempotencyKey])
   @@index([companyId])
 }
 
@@ -2037,6 +2062,7 @@ model Employee {
   endDate      DateTime?
   baseSalary   Decimal   @default(0) @db.Decimal(18, 2)
   bankAccount  String?
+  payrollUserId String?  @unique
   isActive     Boolean   @default(true)
   notes        String?
   createdAt    DateTime  @default(now())
@@ -2046,7 +2072,10 @@ model Employee {
   attendance  AttendanceRecord[]
   leaveRequests LeaveRequest[]
   payrollLines PayrollLine[]
+  payrollProfiles EmployeePayrollProfile[]
   timesheets  Timesheet[]
+
+  @@unique([companyId, id])
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -2103,15 +2132,61 @@ model PayrollRun {
   totalGross  Decimal        @default(0) @db.Decimal(18, 2)
   totalDeduction Decimal     @default(0) @db.Decimal(18, 2)
   totalNet    Decimal        @default(0) @db.Decimal(18, 2)
-  postedAt    DateTime?
+  totalEmployerBpjs Decimal  @default(0) @db.Decimal(18, 2)
+  policyId    String?
   createdById String?
+  approvedById String?
+  approvedAt  DateTime?
+  postedAt    DateTime?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
   company Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  policy  PayrollPolicy? @relation(fields: [policyId], references: [id])
   lines   PayrollLine[]
 
   @@unique([companyId, number])
+  @@index([companyId])
+  @@index([companyId, periodStart, periodEnd])
+}
+
+model PayrollPolicy {
+  id            String         @id @default(cuid())
+  companyId     String
+  effectiveFrom DateTime
+  status        DocumentStatus @default(APPROVED)
+  config        Json
+  sourceUrls    Json
+  notes         String?
+  createdById   String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  company Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  runs    PayrollRun[]
+
+  @@unique([companyId, effectiveFrom])
+  @@index([companyId])
+}
+
+model EmployeePayrollProfile {
+  id             String   @id @default(cuid())
+  companyId      String
+  employeeId     String
+  effectiveFrom  DateTime
+  employmentType String   @default("PERMANENT")
+  taxStatus      String
+  jkkRiskClass   String   @default("SANGAT_RENDAH")
+  bpjsPrograms   Json?
+  fixedAllowance Decimal @default(0) @db.Decimal(18, 2)
+  overtimeRate   Decimal @default(0) @db.Decimal(18, 2)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  company  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, effectiveFrom])
   @@index([companyId])
 }
 
@@ -2125,6 +2200,9 @@ model PayrollLine {
   deductions   Decimal @default(0) @db.Decimal(18, 2)
   taxAmount    Decimal @default(0) @db.Decimal(18, 2)
   bpjsAmount   Decimal @default(0) @db.Decimal(18, 2)
+  employerBpjs Decimal @default(0) @db.Decimal(18, 2)
+  taxStatus    String?
+  detail       Json?
   grossPay     Decimal @db.Decimal(18, 2)
   netPay       Decimal @db.Decimal(18, 2)
 
@@ -2133,6 +2211,30 @@ model PayrollLine {
 
   @@index([payrollRunId])
   @@index([employeeId])
+}
+
+// Settlement of posted payroll liabilities (2101 gaji, 2105 BPJS, 2106 PPh 21) — disbursement record, not a bank module.
+model PayrollDisbursement {
+  id             String         @id @default(cuid())
+  companyId      String
+  payrollRunId  String
+  accountCode    String
+  amount         Decimal        @db.Decimal(18, 2)
+  paymentDate    DateTime
+  bankAccountCode String
+  status         DocumentStatus @default(DRAFT)
+  idempotencyKey String
+  createdById    String?
+  approvedById   String?
+  approvedAt     DateTime?
+  postedAt       DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId])
+  @@index([companyId, accountCode, status])
+  @@unique([companyId, payrollRunId, accountCode])
 }
 
 // ─── Returns & Claims (Fase 12) ──────────────────────────
@@ -2144,6 +2246,22 @@ model SalesReturn {
   customerId      String
   salesInvoiceId  String?
   warehouseId     String?
+  idempotencyKey  String?
+  requestHash     String?
+  inspectionNotes String?
+  disposition     String?
+  inspectedAt     DateTime?
+  approvedAt      DateTime?
+  approvedById    String?
+  receivedAt      DateTime?
+  releasedAt      DateTime?
+  disposedAt      DateTime?
+  refundedAt      DateTime?
+  refundAmount    Decimal?       @db.Decimal(18, 2)
+  settlementStatus String @default("DRAFT")
+  settlementApprovedById String?
+  settlementApprovedAt DateTime?
+  replacementDeliveryId String?
   status          DocumentStatus @default(DRAFT)
   reason          String?
   subtotal        Decimal        @default(0) @db.Decimal(18, 2)
@@ -2158,12 +2276,17 @@ model SalesReturn {
   items   SalesReturnItem[]
 
   @@unique([companyId, number])
+  @@unique([companyId, idempotencyKey])
   @@index([companyId])
 }
 
 model SalesReturnItem {
   id            String  @id @default(cuid())
   salesReturnId String
+  sourceItemId  String?
+  sourceMovementId String?
+  historicalUnitCost Decimal? @db.Decimal(18, 4)
+  taxAmount Decimal @default(0) @db.Decimal(18, 2)
   productId     String
   quantity      Decimal @db.Decimal(18, 4)
   unitPrice     Decimal @db.Decimal(18, 4)
@@ -2172,6 +2295,7 @@ model SalesReturnItem {
   salesReturn SalesReturn @relation(fields: [salesReturnId], references: [id], onDelete: Cascade)
 
   @@index([salesReturnId])
+  @@index([sourceItemId])
 }
 
 model PurchaseReturn {
@@ -2181,6 +2305,13 @@ model PurchaseReturn {
   supplierId      String
   purchaseOrderId String?
   warehouseId     String?
+  idempotencyKey  String?
+  requestHash     String?
+  inspectionNotes String?
+  inspectedAt     DateTime?
+  approvedAt      DateTime?
+  approvedById    String?
+  releasedAt      DateTime?
   status          DocumentStatus @default(DRAFT)
   reason          String?
   subtotal        Decimal        @default(0) @db.Decimal(18, 2)
@@ -2194,12 +2325,18 @@ model PurchaseReturn {
   items   PurchaseReturnItem[]
 
   @@unique([companyId, number])
+  @@unique([companyId, idempotencyKey])
   @@index([companyId])
 }
 
 model PurchaseReturnItem {
   id               String  @id @default(cuid())
   purchaseReturnId String
+  sourceReceiptItemId String?
+  sourceMovementId String?
+  sourceBillItemId String?
+  historicalUnitCost Decimal? @db.Decimal(18, 4)
+  taxAmount Decimal @default(0) @db.Decimal(18, 2)
   productId        String
   quantity         Decimal @db.Decimal(18, 4)
   unitCost         Decimal @db.Decimal(18, 4)
@@ -2208,6 +2345,7 @@ model PurchaseReturnItem {
   purchaseReturn PurchaseReturn @relation(fields: [purchaseReturnId], references: [id], onDelete: Cascade)
 
   @@index([purchaseReturnId])
+  @@index([sourceReceiptItemId])
 }
 
 model Claim {
@@ -2216,7 +2354,13 @@ model Claim {
   number      String
   claimType   String
   partnerName String?
-  status      DocumentStatus @default(DRAFT)
+  ownerId     String?
+  dueAt       DateTime?
+  evidenceFileId String?
+  salesReturnId String?
+  approvedById String?
+  approvedAt DateTime?
+  status      String @default("DRAFT")
   amount      Decimal        @default(0) @db.Decimal(18, 2)
   reason      String?
   resolution  String?
@@ -2252,6 +2396,8 @@ model Project {
   tasks      ProjectTask[]
   timesheets Timesheet[]
   expenses   ProjectExpense[]
+  invoices   SalesInvoice[]
+  billings   ProjectBilling[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -2263,6 +2409,7 @@ model ProjectTask {
   code        String
   name        String
   status      DocumentStatus @default(DRAFT)
+  billableAmount Decimal @default(0) @db.Decimal(18, 2)
   plannedHours Decimal       @default(0) @db.Decimal(18, 2)
   actualHours  Decimal       @default(0) @db.Decimal(18, 2)
   dueDate     DateTime?
@@ -2307,6 +2454,22 @@ model ProjectExpense {
   @@index([projectId])
 }
 
+model ProjectBilling {
+  id String @id @default(cuid())
+  companyId String
+  projectId String
+  sourceType String
+  sourceId String
+  idempotencyKey String
+  requestHash String
+  invoiceId String @unique
+  invoice SalesInvoice @relation(fields: [invoiceId], references: [id])
+  createdAt DateTime @default(now())
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@unique([companyId, idempotencyKey])
+  @@unique([projectId, sourceType, sourceId])
+}
+
 // ─── Credit/Debit Notes ──────────────────────────────────
 
 model CreditNote {
@@ -2330,14 +2493,16 @@ model CreditNote {
   items   CreditNoteItem[]
 
   @@unique([companyId, number])
+  @@unique([companyId, salesReturnId])
   @@index([companyId])
 }
 
 model CreditNoteItem {
-  id           String  @id @default(cuid())
-  creditNoteId String
-  productId    String?
-  description  String
+  id                String  @id @default(cuid())
+  creditNoteId      String
+  productId         String?
+  sourceReturnItemId String?
+  description       String
   quantity     Decimal @db.Decimal(18, 4)
   unitPrice    Decimal @db.Decimal(18, 4)
   total        Decimal @db.Decimal(18, 2)
@@ -2368,6 +2533,7 @@ model DebitNote {
   items   DebitNoteItem[]
 
   @@unique([companyId, number])
+  @@unique([companyId, purchaseReturnId])
   @@index([companyId])
 }
 
@@ -2375,6 +2541,7 @@ model DebitNoteItem {
   id          String  @id @default(cuid())
   debitNoteId String
   productId   String?
+  sourceReturnItemId String?
   description String
   quantity    Decimal @db.Decimal(18, 4)
   unitPrice   Decimal @db.Decimal(18, 4)

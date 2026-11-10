@@ -24,7 +24,7 @@ import {
 import { useClientPage } from "@/hooks/use-client-page";
 import { formToObject } from "@/lib/api-client";
 import { formatDateId } from "@/lib/dates";
-import { formatIdr } from "@/lib/money";
+import { formatIdr, money } from "@/lib/money";
 import {
   Building2,
   Landmark,
@@ -40,6 +40,7 @@ type BankData = {
     name: string;
     bankName: string | null;
     accountNumber: string | null;
+    glAccountId: string | null;
     statements: Array<{
       id: string;
       lines: Array<{
@@ -52,6 +53,7 @@ type BankData = {
       }>;
     }>;
   }>;
+  journalLines?: Array<{ id: string; accountId: string; journalNumber: string; description: string | null; amount: string }>;
   glAccounts?: Array<{ code: string; name: string }>;
 };
 
@@ -62,6 +64,7 @@ export function BankClient() {
   const mutation = useFinanceBankMutation();
   const data = query.data as BankData | undefined;
   const [formMode, setFormMode] = useState<FormMode>("none");
+  const [selectedLines, setSelectedLines] = useState<Record<string, string>>({});
 
   const accounts = data?.accounts ?? [];
   const accountsPage = useClientPage(accounts, 20);
@@ -73,6 +76,7 @@ export function BankClient() {
           s.lines.map((l) => ({
             ...l,
             accountCode: a.code,
+            glAccountId: a.glAccountId,
           })),
         ),
       ),
@@ -369,6 +373,7 @@ export function BankClient() {
               )}
             </Card>
 
+            <MutationError error={mutation.error} />
             <Card title={`Baris statement (${linesPage.total})`}>
               {linesPage.total === 0 ? (
                 <EmptyState
@@ -423,20 +428,25 @@ export function BankClient() {
                         </td>
                         <td className="px-3 py-2">
                           {!l.isReconciled ? (
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              disabled={mutation.isPending}
-                              onClick={() =>
-                                mutation.mutate({
-                                  action: "reconcile",
-                                  lineId: l.id,
-                                  matchedRef: `MANUAL-${l.id.slice(0, 6)}`,
-                                })
-                              }
-                            >
-                              Rekonsiliasi
-                            </Button>
+                            <form className="flex gap-2" onSubmit={(e) => {
+                              e.preventDefault();
+                              const selectedJournalLineId = selectedLines[l.id];
+                              if (!selectedJournalLineId) return;
+                              mutation.mutate({ action: "reconcile", lineId: l.id, matchedRef: selectedJournalLineId });
+                            }}>
+                              <Select
+                                aria-label={`Jurnal untuk statement ${l.id}`}
+                                required
+                                value={selectedLines[l.id] ?? ""}
+                                onChange={(e) => setSelectedLines((prev) => ({ ...prev, [l.id]: e.target.value }))}
+                              >
+                                <option value="">Pilih jurnal</option>
+                                {(data.journalLines ?? []).filter((j) => j.accountId === l.glAccountId && money(j.amount).eq(money(l.amount))).map((j) => (
+                                  <option key={j.id} value={j.id}>{j.journalNumber} — {j.description || j.id} — {formatIdr(j.amount)}</option>
+                                ))}
+                              </Select>
+                              <Button type="submit" variant="secondary" disabled={mutation.isPending || !selectedLines[l.id]}>Rekonsiliasi</Button>
+                            </form>
                           ) : (
                             <Button
                               type="button"

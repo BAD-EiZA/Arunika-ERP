@@ -40,8 +40,13 @@ export async function recordAttendance(input: {
   status?: string;
   notes?: string;
 }) {
+  const employee = await prisma.employee.findFirst({
+    where: { id: input.employeeId, companyId: input.companyId },
+  });
+  if (!employee) throw notFound("Karyawan tidak ditemukan");
   return prisma.attendanceRecord.upsert({
     where: {
+      companyId: input.companyId,
       employeeId_workDate: {
         employeeId: input.employeeId,
         workDate: input.workDate,
@@ -75,6 +80,11 @@ export async function createLeaveRequest(input: {
   reason?: string;
 }) {
   if (qty(input.days).lte(0)) throw validationError("Hari cuti harus > 0");
+  if (input.endDate < input.startDate) throw validationError("Periode cuti tidak valid");
+  const employee = await prisma.employee.findFirst({
+    where: { id: input.employeeId, companyId: input.companyId },
+  });
+  if (!employee) throw notFound("Karyawan tidak ditemukan");
   return prisma.leaveRequest.create({
     data: {
       companyId: input.companyId,

@@ -1,0 +1,5 @@
+ALTER TABLE "SalesReturn" ADD COLUMN "disposedAt" TIMESTAMP(3), ADD COLUMN "refundedAt" TIMESTAMP(3), ADD COLUMN "refundAmount" DECIMAL(18,2), ADD COLUMN "replacementDeliveryId" TEXT, ADD COLUMN "settlementStatus" TEXT NOT NULL DEFAULT 'DRAFT', ADD COLUMN "settlementApprovedById" TEXT, ADD COLUMN "settlementApprovedAt" TIMESTAMP(3);
+ALTER TABLE "Claim" ADD COLUMN "ownerId" TEXT, ADD COLUMN "dueAt" TIMESTAMP(3), ADD COLUMN "evidenceFileId" TEXT, ADD COLUMN "salesReturnId" TEXT, ADD COLUMN "approvedById" TEXT, ADD COLUMN "approvedAt" TIMESTAMP(3);
+ALTER TABLE "Claim" ALTER COLUMN "status" DROP DEFAULT;
+ALTER TABLE "Claim" ALTER COLUMN "status" TYPE TEXT USING "status"::TEXT;
+ALTER TABLE "Claim" ALTER COLUMN "status" SET DEFAULT 'DRAFT';

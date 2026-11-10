@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
 const STORAGE_KEY = "arunika.crm.boardOrder.v1";
 
@@ -40,13 +40,8 @@ export function mergeStageOrder(
 }
 
 export function useCrmBoardOrder() {
-  const [order, setOrder] = useState<BoardOrder>({});
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    setOrder(readStorage());
-    setReady(true);
-  }, []);
+  const [order, setOrder] = useState<BoardOrder>(readStorage);
+  const ready = true;
 
   const persist = useCallback((next: BoardOrder) => {
     setOrder(next);

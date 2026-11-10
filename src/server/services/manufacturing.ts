@@ -43,6 +43,12 @@ export async function createBom(input: {
   if (input.items.some((i) => i.productId === input.finishedProductId)) {
     throw validationError("Komponen tidak boleh sama dengan finished good");
   }
+  if (qty(input.quantity ?? 1).lte(0) || input.items.some((i) => qty(i.quantity).lte(0) || qty(i.scrapPct ?? 0).lt(0))) {
+    throw validationError("Kuantitas BOM harus positif, scrap tidak negatif");
+  }
+  const ids = [...new Set([input.finishedProductId, ...input.items.map((i) => i.productId)])];
+  const products = await prisma.product.findMany({ where: { id: { in: ids }, companyId: input.companyId } });
+  if (products.length !== ids.length) throw notFound("Produk BOM tidak ditemukan");
   return prisma.billOfMaterials.create({
     data: {
       companyId: input.companyId,
@@ -77,6 +83,9 @@ export async function createRouting(input: {
   }>;
 }) {
   if (!input.steps.length) throw validationError("Routing minimal 1 step");
+  const ids = [...new Set(input.steps.map((s) => s.workCenterId))];
+  const centers = await prisma.workCenter.findMany({ where: { id: { in: ids }, companyId: input.companyId } });
+  if (centers.length !== ids.length) throw notFound("Work center tidak ditemukan");
   return prisma.routing.create({
     data: {
       companyId: input.companyId,
@@ -111,6 +120,11 @@ export async function createProductionOrder(input: {
   if (plannedQty.lte(0)) throw validationError("Qty rencana harus > 0");
 
   return prisma.$transaction(async (tx) => {
+    const product = await tx.product.findFirst({ where: { id: input.finishedProductId, companyId: input.companyId } });
+    if (!product) throw notFound("Produk tidak ditemukan");
+    if (input.warehouseId && !await tx.warehouse.findFirst({ where: { id: input.warehouseId, companyId: input.companyId } })) {
+      throw notFound("Warehouse tidak ditemukan");
+    }
     const number = await nextDocumentNumber(tx, input.companyId, "MO");
     let materials: Array<{
       productId: string;
@@ -124,6 +138,9 @@ export async function createProductionOrder(input: {
         include: { items: { include: { product: true } } },
       });
       if (!bom) throw notFound("BOM tidak ditemukan");
+      if (bom.finishedProductId !== input.finishedProductId) throw validationError("BOM tidak sesuai finished product");
+      if (qty(bom.quantity).lte(0)) throw validationError("Kuantitas BOM tidak valid");
+      if (bom.items.some((i) => i.product.companyId !== input.companyId)) throw notFound("Produk material tidak ditemukan");
       const bomQty = qty(bom.quantity);
       materials = bom.items.map((item) => {
         const factor = plannedQty.div(bomQty.gt(0) ? bomQty : qty(1));
@@ -338,11 +355,15 @@ export async function reportProductionLabor(input: {
   stepId: string;
   minutes: string | number;
 }) {
-  const order = await prisma.productionOrder.findFirst({
+  return prisma.$transaction(async (tx) => {
+  const order = await tx.productionOrder.findFirst({
     where: { id: input.productionOrderId, companyId: input.companyId },
     include: { steps: true },
   });
   if (!order) throw notFound("Production order tidak ditemukan");
+  if (!["RELEASED", "IN_PROGRESS"].includes(order.status)) {
+    throw conflict("Labor hanya boleh dilaporkan sebelum produksi selesai");
+  }
   const step = order.steps.find((s) => s.id === input.stepId);
   if (!step) throw notFound("Step tidak ditemukan");
 
@@ -352,7 +373,6 @@ export async function reportProductionLabor(input: {
   const labor = minutes.div(60).mul(money(step.laborRate));
   const overhead = minutes.div(60).mul(money(step.overheadRate));
 
-  await prisma.$transaction(async (tx) => {
     await tx.productionStep.update({
       where: { id: step.id },
       data: {
@@ -395,9 +415,8 @@ export async function reportProductionLabor(input: {
         status: order.status === "RELEASED" ? "IN_PROGRESS" : order.status,
       },
     });
-  }, { maxWait: 15000, timeout: 60000 });
-
   return { ok: true };
+  }, { maxWait: 15000, timeout: 60000, isolationLevel: "Serializable" });
 }
 
 export async function completeProductionOrder(input: {
@@ -425,18 +444,31 @@ export async function completeProductionOrder(input: {
       throw conflict("Qty selesai melebihi sisa planned");
     }
 
+    // Partial receipt: charge only this batch's share of accumulated cost.
+    const prevCompleted = qty(order.completedQty);
+    const nextCompleted = prevCompleted.plus(completeQty);
+    if (order.materials.some((m) => qty(m.issuedQty).lt(qty(m.plannedQty)))) {
+      throw conflict("Material produksi belum di-issue seluruhnya");
+    }
     const materialCost = order.materials.reduce(
       (acc, m) => acc.plus(money(m.totalCost)),
       money(0),
     );
-    const totalCost = materialCost
+    const accumulated = materialCost
       .plus(money(order.laborCost))
       .plus(money(order.overheadCost));
-    const unitCost = input.unitCost
-      ? money(input.unitCost)
-      : completeQty.gt(0)
-        ? totalCost.div(completeQty)
-        : money(0);
+    const priorReceipts = await tx.productionCostEntry.aggregate({
+      where: { productionOrderId: order.id, costType: "FINISHED_GOOD" },
+      _sum: { amount: true },
+    });
+    const unallocated = accumulated.minus(money(priorReceipts._sum.amount ?? 0));
+    if (unallocated.lt(0)) throw conflict("Biaya FG melebihi biaya produksi");
+    const done = nextCompleted.gte(qty(order.plannedQty));
+    const batchCost = done ? unallocated : unallocated.mul(completeQty).div(remaining).toDecimalPlaces(2);
+    const unitCost = batchCost.div(completeQty);
+    if (input.unitCost !== undefined && !money(input.unitCost).eq(unitCost)) {
+      throw validationError("Override unitCost tidak boleh menyimpang dari biaya WIP");
+    }
 
     const key = newIdempotencyKey("mo-fg");
     await postStockMovement(tx, {
@@ -454,14 +486,11 @@ export async function completeProductionOrder(input: {
       allowNegative: order.company.allowNegativeStock,
     });
 
-    const nextCompleted = qty(order.completedQty).plus(completeQty);
-    const done = nextCompleted.gte(qty(order.plannedQty));
-
     await tx.productionCostEntry.create({
       data: {
         productionOrderId: order.id,
         costType: "FINISHED_GOOD",
-        amount: toPrismaMoney(unitCost.mul(completeQty)),
+        amount: toPrismaMoney(batchCost),
         quantity: toPrismaDecimal(completeQty),
         reference: order.finishedProductId,
         notes: "FG receipt costing",
@@ -473,7 +502,7 @@ export async function completeProductionOrder(input: {
       data: {
         completedQty: toPrismaDecimal(nextCompleted),
         materialCost: toPrismaMoney(materialCost),
-        totalCost: toPrismaMoney(totalCost),
+        totalCost: toPrismaMoney(accumulated),
         unitCost: toPrismaMoney(unitCost),
         status: done ? "COMPLETED" : "IN_PROGRESS",
         completedAt: done ? new Date() : order.completedAt,
@@ -486,13 +515,13 @@ export async function completeProductionOrder(input: {
       sourceDocType: "ProductionOrder",
       sourceDocId: order.id,
       description: `MO FG ${order.number}`,
-      amount: unitCost.mul(completeQty).toString(),
+      amount: batchCost.toString(),
       idempotencyKey: `je:${key}`,
       postedById: input.userId,
     });
 
     return updated;
-  }, { maxWait: 15000, timeout: 60000 });
+  }, { maxWait: 15000, timeout: 60000, isolationLevel: "Serializable" });
 }
 
 export async function getProductionCosting(
@@ -561,10 +590,21 @@ export async function closeProductionOrder(
 ) {
   const order = await prisma.productionOrder.findFirst({
     where: { id, companyId },
+    include: { materials: true },
   });
   if (!order) throw notFound("Production order tidak ditemukan");
-  if (!["COMPLETED", "IN_PROGRESS"].includes(order.status)) {
+  if (order.status !== "COMPLETED") {
     throw conflict("Order belum bisa ditutup");
+  }
+  if (!qty(order.completedQty).eq(qty(order.plannedQty)) || order.materials.some((m) => !qty(m.issuedQty).eq(qty(m.plannedQty)))) {
+    throw conflict("Material atau kuantitas produksi belum selesai");
+  }
+  const booked = await prisma.productionCostEntry.aggregate({
+    where: { productionOrderId: order.id, costType: "FINISHED_GOOD" },
+    _sum: { amount: true },
+  });
+  if (!money(order.totalCost).eq(money(booked._sum.amount ?? 0))) {
+    throw conflict("WIP belum nol: masih ada biaya produksi yang belum dialokasikan ke FG");
   }
   return prisma.productionOrder.update({
     where: { id },

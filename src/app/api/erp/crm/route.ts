@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("customer:view");
     const [leads, opportunities] = await Promise.all([
       prisma.crmLead.findMany({
         where: { companyId: ctx.companyId },
@@ -66,6 +66,7 @@ export async function POST(req: Request) {
       stage?: string;
       probability?: number;
     };
+    await assertRequestAccess(ctx, body);
 
     if (body.action === "lead_status") {
       const lead = await updateLeadStatus(

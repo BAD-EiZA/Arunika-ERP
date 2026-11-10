@@ -3,6 +3,7 @@ import { writeAudit } from "@/lib/audit";
 import { nextDocumentNumber } from "@/lib/document-number";
 import { conflict, notFound, validationError } from "@/lib/errors";
 import { newIdempotencyKey } from "@/lib/idempotency";
+import { createHash } from "node:crypto";
 import {
   lineTotal,
   money,
@@ -29,6 +30,7 @@ type LineInput = {
 
 function mapItems(items: LineInput[]) {
   if (!items.length) throw validationError("Minimal 1 item");
+  if (new Set(items.map((i) => i.productId)).size !== items.length) throw validationError("Produk duplikat");
   return items.map((item) => {
     const quantity = qty(item.quantity);
     const unitPrice = money(item.unitPrice);
@@ -222,12 +224,16 @@ export async function postDeliveryOrder(input: {
 }) {
   return prisma.$transaction(async (tx) => {
     const key = input.idempotencyKey ?? newIdempotencyKey("do");
+    const requestHash = createHash("sha256").update(JSON.stringify({ salesOrderId: input.salesOrderId, warehouseId: input.warehouseId, notes: input.notes ?? null, items: input.items.map(i => ({ productId: i.productId, quantityDelivered: qty(i.quantityDelivered).toString() })) })).digest("hex");
     const existing = await tx.deliveryOrder.findUnique({
       where: {
         companyId_idempotencyKey: { companyId: input.companyId, idempotencyKey: key },
       },
     });
-    if (existing) return existing;
+    if (existing) {
+      if (existing.requestHash !== requestHash) throw conflict("Idempotensi: payload berbeda untuk key yang sama");
+      return existing;
+    }
 
     const so = await tx.salesOrder.findFirst({
       where: { id: input.salesOrderId, companyId: input.companyId },
@@ -238,6 +244,8 @@ export async function postDeliveryOrder(input: {
       throw conflict("SO belum siap dikirim");
     }
 
+    if (!input.items.length) throw validationError("Minimal 1 item");
+    if (new Set(input.items.map((i) => i.productId)).size !== input.items.length || new Set(so.items.map((i) => i.productId)).size !== so.items.length) throw validationError("Produk duplikat");
     const number = await nextDocumentNumber(tx, input.companyId, "DO");
     const doItems = input.items.map((item) => {
       const soItem = so.items.find((i) => i.productId === item.productId);
@@ -265,10 +273,45 @@ export async function postDeliveryOrder(input: {
         postedAt: new Date(),
         createdById: input.userId,
         idempotencyKey: key,
+        requestHash,
         items: { create: doItems },
       },
       include: { items: true },
     });
+
+    const releaseRemaining = new Map(delivery.items.map((item) =>
+      [item.productId, qty(item.quantityDelivered)],
+    ));
+    for (const reservation of so.reservations) {
+      if (reservation.warehouseId !== input.warehouseId) continue;
+      const deliveredItem = delivery.items.find(
+        (i) => i.productId === reservation.productId,
+      );
+      if (!deliveredItem) continue;
+      const cap = releaseRemaining.get(reservation.productId) ?? qty(0);
+      const released = qty(reservation.quantity).lt(cap)
+        ? qty(reservation.quantity) : cap;
+      releaseRemaining.set(reservation.productId, cap.minus(released));
+      if (released.lte(0)) continue;
+      await adjustReservation(tx, {
+        companyId: input.companyId,
+        warehouseId: reservation.warehouseId,
+        productId: reservation.productId,
+        delta: released.neg().toString(),
+      });
+      const left = qty(reservation.quantity).minus(released);
+      if (left.lte(0)) {
+        await tx.stockReservation.update({
+          where: { id: reservation.id },
+          data: { isActive: false, releasedAt: new Date(), quantity: "0" },
+        });
+      } else {
+        await tx.stockReservation.update({
+          where: { id: reservation.id },
+          data: { quantity: toPrismaDecimal(left) },
+        });
+      }
+    }
 
     let cogsTotal = money(0);
     for (const item of delivery.items) {
@@ -281,7 +324,7 @@ export async function postDeliveryOrder(input: {
         },
       });
       const unitCost = money(balance?.averageCost ?? 0);
-      cogsTotal = cogsTotal.plus(unitCost.mul(qty(item.quantityDelivered)));
+      cogsTotal = cogsTotal.plus(unitCost.mul(qty(item.quantityDelivered)).toDecimalPlaces(2));
 
       await postStockMovement(tx, {
         companyId: input.companyId,
@@ -308,31 +351,6 @@ export async function postDeliveryOrder(input: {
         },
       });
 
-      await adjustReservation(tx, {
-        companyId: input.companyId,
-        warehouseId: input.warehouseId,
-        productId: item.productId,
-        delta: qty(item.quantityDelivered).neg().toString(),
-      });
-    }
-
-    for (const reservation of so.reservations) {
-      const deliveredItem = delivery.items.find(
-        (i) => i.productId === reservation.productId,
-      );
-      if (!deliveredItem) continue;
-      const left = qty(reservation.quantity).minus(qty(deliveredItem.quantityDelivered));
-      if (left.lte(0)) {
-        await tx.stockReservation.update({
-          where: { id: reservation.id },
-          data: { isActive: false, releasedAt: new Date(), quantity: "0" },
-        });
-      } else {
-        await tx.stockReservation.update({
-          where: { id: reservation.id },
-          data: { quantity: toPrismaDecimal(left) },
-        });
-      }
     }
 
     const refreshed = await tx.salesOrderItem.findMany({
@@ -374,7 +392,7 @@ export async function postDeliveryOrder(input: {
     });
 
     return delivery;
-  }, { maxWait: 15000, timeout: 60000 });
+  }, { maxWait: 15000, timeout: 60000, isolationLevel: "Serializable" });
 }
 
 export async function issueInvoiceFromDelivery(input: {
@@ -386,8 +404,36 @@ export async function issueInvoiceFromDelivery(input: {
   exchangeRate?: number | string;
   /** Split into N equal installments (1 = single invoice). */
   installments?: number;
+  idempotencyKey?: string;
 }) {
+  const parts = Math.max(1, Math.min(12, Math.floor(input.installments ?? 1)));
+  const currency = input.currency || "IDR";
+  const exchangeRate = money(input.exchangeRate ?? 1);
+  const requestHash = input.idempotencyKey ? createHash("sha256").update(JSON.stringify({
+    deliveryOrderId: input.deliveryOrderId,
+    taxRate: money(input.taxRate ?? 0).toString(),
+    currency, exchangeRate: exchangeRate.toFixed(2), installments: parts,
+  })).digest("hex") : undefined;
+
   return prisma.$transaction(async (tx) => {
+    if (input.idempotencyKey) {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify(["inv", input.companyId, input.idempotencyKey])}, 0))::text`;
+      const existing = await tx.salesInvoice.findUnique({
+        where: { companyId_idempotencyKey: { companyId: input.companyId, idempotencyKey: input.idempotencyKey } },
+      });
+      if (existing) {
+        if (existing.requestHash !== requestHash) throw conflict("Idempotensi: payload berbeda untuk key yang sama");
+        const siblings = parts > 1
+          ? await tx.salesInvoice.findMany({
+              where: { companyId: input.companyId, salesOrderId: existing.salesOrderId, deliveryOrderId: existing.deliveryOrderId, installmentOf: parts },
+              orderBy: { installmentNo: "asc" },
+            })
+          : [existing];
+        return parts === 1 ? existing : siblings;
+      }
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify(["inv-delivery", input.companyId, input.deliveryOrderId])}, 0))::text`;
+    }
+    await tx.$queryRaw`SELECT id FROM "SalesOrder" WHERE "companyId" = ${input.companyId} AND id = (SELECT "salesOrderId" FROM "DeliveryOrder" WHERE id = ${input.deliveryOrderId} AND "companyId" = ${input.companyId}) FOR UPDATE`;
     const delivery = await tx.deliveryOrder.findFirst({
       where: { id: input.deliveryOrderId, companyId: input.companyId },
       include: {
@@ -398,12 +444,18 @@ export async function issueInvoiceFromDelivery(input: {
     if (!delivery) throw notFound("Delivery tidak ditemukan");
     if (delivery.status !== "POSTED") throw conflict("Delivery belum diposting");
 
+    const existingInvoice = await tx.salesInvoice.findFirst({ where: { companyId: input.companyId, deliveryOrderId: delivery.id } });
+    if (existingInvoice) throw conflict("Delivery sudah difakturkan");
+
     const taxRate = money(input.taxRate ?? 0);
+    if (new Set(delivery.items.map((i) => i.productId)).size !== delivery.items.length || new Set(delivery.salesOrder.items.map((i) => i.productId)).size !== delivery.salesOrder.items.length) throw validationError("Produk duplikat");
     const lines = delivery.items.map((item) => {
       const soItem = delivery.salesOrder.items.find(
         (i) => i.productId === item.productId,
       );
-      const unitPrice = money(soItem?.unitPrice ?? 0);
+      if (!soItem) throw conflict("Produk tidak ada di SO");
+      if (qty(soItem.quantityInvoiced).plus(qty(item.quantityDelivered)).gt(qty(soItem.quantityDelivered))) throw conflict("Invoice melebihi pengiriman");
+      const unitPrice = money(soItem.unitPrice);
       const quantity = qty(item.quantityDelivered);
       const lineSub = quantity.mul(unitPrice);
       const taxAmount = lineSub.mul(taxRate).div(100);
@@ -427,9 +479,6 @@ export async function issueInvoiceFromDelivery(input: {
       total,
     );
 
-    const parts = Math.max(1, Math.min(12, Math.floor(input.installments ?? 1)));
-    const currency = input.currency || "IDR";
-    const exchangeRate = money(input.exchangeRate ?? 1);
     if (exchangeRate.lte(0)) throw validationError("Kurs harus > 0");
 
     const invoices = [];
@@ -482,6 +531,8 @@ export async function issueInvoiceFromDelivery(input: {
           balance: toPrismaMoney(share),
           installmentOf: parts > 1 ? parts : null,
           installmentNo: parts > 1 ? i + 1 : null,
+          idempotencyKey: i === 0 ? input.idempotencyKey : undefined,
+          requestHash: i === 0 ? requestHash : undefined,
           issuedAt: new Date(),
           items: { create: invLines },
         },
@@ -537,7 +588,7 @@ export async function issueInvoiceFromDelivery(input: {
     }
 
     return parts === 1 ? invoices[0] : invoices;
-  });
+  }, { isolationLevel: input.idempotencyKey ? "ReadCommitted" : "Serializable" });
 }
 
 export async function postCustomerPayment(input: {
@@ -547,16 +598,36 @@ export async function postCustomerPayment(input: {
   amount: number | string;
   method?: string;
   reference?: string;
+  idempotencyKey?: string;
   allocations: Array<{ invoiceId: string; amount: number | string }>;
 }) {
   const amount = money(input.amount);
   if (amount.lte(0)) throw validationError("Jumlah pembayaran harus > 0");
+  if (input.allocations.some((a) => money(a.amount).lte(0))) throw validationError("Alokasi harus > 0");
+  if (new Set(input.allocations.map((a) => a.invoiceId)).size !== input.allocations.length) throw validationError("Alokasi duplikat");
   const allocTotal = sumMoney(input.allocations.map((a) => a.amount));
   if (!allocTotal.equals(amount)) {
     throw validationError("Total alokasi harus sama dengan jumlah pembayaran");
   }
 
+  const requestHash = input.idempotencyKey ? createHash("sha256").update(JSON.stringify({
+    partnerId: input.customerId, amount: amount.toFixed(2),
+    method: input.method ?? "BANK_TRANSFER", reference: input.reference ?? null,
+    allocations: input.allocations.map((a) => [a.invoiceId, money(a.amount).toFixed(2)])
+      .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0),
+  })).digest("hex") : undefined;
+
   return prisma.$transaction(async (tx) => {
+    if (input.idempotencyKey) {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify(["cp", input.companyId, input.idempotencyKey])}, 0))::text`;
+      const existing = await tx.customerPayment.findUnique({
+        where: { companyId_idempotencyKey: { companyId: input.companyId, idempotencyKey: input.idempotencyKey } },
+      });
+      if (existing) {
+        if (existing.requestHash !== requestHash) throw conflict("Idempotensi: payload berbeda untuk key yang sama");
+        return existing;
+      }
+    }
     const number = await nextDocumentNumber(tx, input.companyId, "CP");
     const payment = await tx.customerPayment.create({
       data: {
@@ -567,6 +638,8 @@ export async function postCustomerPayment(input: {
         method: input.method ?? "BANK_TRANSFER",
         amount: toPrismaMoney(amount),
         reference: input.reference,
+        idempotencyKey: input.idempotencyKey || undefined,
+        requestHash,
         postedAt: new Date(),
         createdById: input.userId,
         allocations: {
@@ -583,12 +656,14 @@ export async function postCustomerPayment(input: {
         where: { id: a.invoiceId, companyId: input.companyId },
       });
       if (!invoice) throw notFound("Invoice tidak ditemukan");
+      if (invoice.customerId !== input.customerId) throw conflict("Pelanggan invoice tidak sesuai");
+      if (!["ISSUED", "OPEN", "OVERDUE", "PARTIALLY_PAID"].includes(invoice.status)) throw conflict("Invoice tidak bisa dibayar");
       const pay = money(a.amount);
       if (pay.gt(money(invoice.balance))) {
         throw conflict("Alokasi melebihi saldo invoice");
       }
       const amountPaid = money(invoice.amountPaid).plus(pay);
-      const balance = money(invoice.total).minus(amountPaid);
+      const balance = money(invoice.balance).minus(pay);
       await tx.salesInvoice.update({
         where: { id: invoice.id },
         data: {
@@ -611,5 +686,5 @@ export async function postCustomerPayment(input: {
     });
 
     return payment;
-  });
+  }, { isolationLevel: "ReadCommitted" });
 }

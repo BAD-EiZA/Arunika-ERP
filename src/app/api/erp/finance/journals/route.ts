@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requireIdempotencyKey, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("journal:view");
     const url = new URL(req.url);
     const id = url.searchParams.get("id");
 
@@ -137,6 +137,7 @@ export async function POST(req: Request) {
 
     if (body.action === "reverse") {
       const ctx = await requirePermission("journal:reverse");
+    await assertRequestAccess(ctx, body);
       const journal = await reverseJournal({
         companyId: ctx.companyId,
         userId: ctx.user.id,
@@ -154,6 +155,7 @@ export async function POST(req: Request) {
 
     if (body.action === "post_draft") {
       const ctx = await requirePermission("journal:post");
+    await assertRequestAccess(ctx, body);
       const journal = await postDraftJournal({
         companyId: ctx.companyId,
         userId: ctx.user.id,
@@ -184,6 +186,7 @@ export async function POST(req: Request) {
 
     if (body.action === "draft") {
       const ctx = await requirePermission("journal:create");
+    await assertRequestAccess(ctx, body);
       const journal = await saveDraftJournal({
         companyId: ctx.companyId,
         userId: ctx.user.id,
@@ -204,7 +207,10 @@ export async function POST(req: Request) {
     }
 
     const ctx = await requirePermission("journal:post");
+    await assertRequestAccess(ctx, body);
+    const idempotencyKey = requireIdempotencyKey(req);
     const journal = await postManualJournal({
+      idempotencyKey,
       companyId: ctx.companyId,
       userId: ctx.user.id,
       description: body.description || "Jurnal manual",

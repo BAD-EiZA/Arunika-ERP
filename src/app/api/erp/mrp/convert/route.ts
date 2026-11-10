@@ -1,4 +1,4 @@
-import { requirePermission } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { convertMrpSuggestion } from "@/server/services/mrp-convert";
 
@@ -15,6 +15,7 @@ export async function POST(req: Request) {
       bomId?: string;
       routingId?: string;
     };
+    await assertRequestAccess(ctx, body);
     const result = await convertMrpSuggestion({
       companyId: ctx.companyId,
       userId: ctx.user.id,

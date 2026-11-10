@@ -98,25 +98,49 @@ export async function runMrp(input: {
     );
   }
 
-  // explode FG demand through BOM for make items
+  // Latest active BOM per finished product; DFS explodes unordered multilevel
+  // requirements. Cycles cannot be planned safely and must fail closed.
+  const selected = new Map<string, (typeof boms)[number]>();
   for (const bom of boms) {
-    const fgDemand = demand.get(bom.finishedProductId) ?? qty(0);
-    const fgSupply = supply.get(bom.finishedProductId) ?? qty(0);
-    const fgOnHand = onHand.get(bom.finishedProductId) ?? qty(0);
-    const netFg = fgDemand.minus(fgSupply).minus(fgOnHand);
-    if (netFg.lte(0)) continue;
-    const bomQty = qty(bom.quantity).gt(0) ? qty(bom.quantity) : qty(1);
-    for (const item of bom.items) {
-      const need = qty(item.quantity)
-        .mul(netFg)
-        .div(bomQty)
-        .mul(qty(1).plus(qty(item.scrapPct).div(100)));
-      demand.set(
-        item.productId,
-        (demand.get(item.productId) ?? qty(0)).plus(need),
-      );
-    }
+    const existing = selected.get(bom.finishedProductId);
+    if (!existing || bom.version > existing.version) selected.set(bom.finishedProductId, bom);
   }
+  const visiting = new Set<string>();
+  const exploded = new Set<string>();
+  const ordered: string[] = [];
+  function visit(productId: string) {
+    if (visiting.has(productId)) throw validationError("Siklus BOM terdeteksi pada MRP");
+    if (exploded.has(productId)) return;
+    visiting.add(productId);
+    for (const item of selected.get(productId)?.items ?? []) visit(item.productId);
+    visiting.delete(productId);
+    exploded.add(productId);
+    ordered.push(productId);
+  }
+  for (const productId of selected.keys()) visit(productId);
+  exploded.clear();
+  function explode(productId: string) {
+    if (visiting.has(productId)) throw validationError("Siklus BOM terdeteksi pada MRP");
+    if (exploded.has(productId)) return;
+    const bom = selected.get(productId);
+    if (!bom) return;
+    if (qty(bom.quantity).lte(0)) throw validationError("Kuantitas BOM tidak valid");
+    visiting.add(productId);
+    const net = (demand.get(productId) ?? qty(0))
+      .minus(supply.get(productId) ?? qty(0))
+      .minus(onHand.get(productId) ?? qty(0));
+    if (net.gt(0)) {
+      for (const item of bom.items) {
+        const need = qty(item.quantity).mul(net).div(qty(bom.quantity))
+          .mul(qty(1).plus(qty(item.scrapPct).div(100)));
+        demand.set(item.productId, (demand.get(item.productId) ?? qty(0)).plus(need));
+      }
+    }
+
+    visiting.delete(productId);
+    exploded.add(productId);
+  }
+  for (const productId of ordered.reverse()) explode(productId);
 
   const productIds = new Set<string>([
     ...onHand.keys(),

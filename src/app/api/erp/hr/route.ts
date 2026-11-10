@@ -1,6 +1,7 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
+import { hasPermission } from "@/lib/permissions";
 import {
   approveLeaveRequest,
   createEmployee,
@@ -38,7 +39,9 @@ export async function GET() {
         name: e.name,
         email: e.email,
         position: e.position,
-        baseSalary: e.baseSalary.toString(),
+        ...(hasPermission(ctx.permissions, "employee_sensitive:view")
+          ? { baseSalary: e.baseSalary.toString() }
+          : {}),
         isActive: e.isActive,
       })),
       attendance: attendance.map((a) => ({
@@ -83,6 +86,7 @@ export async function POST(req: Request) {
 
     if (body.action === "attendance") {
       const ctx = await requirePermission("attendance:manage");
+    await assertRequestAccess(ctx, body);
       const rec = await recordAttendance({
         companyId: ctx.companyId,
         employeeId: String(body.employeeId ?? ""),
@@ -94,6 +98,7 @@ export async function POST(req: Request) {
 
     if (body.action === "leave") {
       const ctx = await requirePermission("leave:view");
+    await assertRequestAccess(ctx, body);
       const leave = await createLeaveRequest({
         companyId: ctx.companyId,
         employeeId: String(body.employeeId ?? ""),
@@ -108,11 +113,13 @@ export async function POST(req: Request) {
 
     if (body.action === "approve_leave") {
       const ctx = await requirePermission("leave:approve");
+    await assertRequestAccess(ctx, body);
       const leave = await approveLeaveRequest(ctx.companyId, String(body.id ?? ""));
       return { leave: { id: leave.id, status: leave.status } };
     }
 
     const ctx = await requirePermission("employee:manage");
+    await assertRequestAccess(ctx, body);
     const emp = await createEmployee({
       companyId: ctx.companyId,
       code: String(body.code ?? ""),

@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertResourceAccess, assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import { approveSalesOrder, createSalesOrder } from "@/server/services/sales";
@@ -7,10 +7,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("sales_order:view");
     const [orders, customers, products, warehouses, branches] = await Promise.all([
       prisma.salesOrder.findMany({
-        where: { companyId: ctx.companyId },
+        where: { ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}), ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId },
         include: {
           customer: true,
           items: { include: { product: true } },
@@ -24,10 +24,10 @@ export async function GET() {
         where: { companyId: ctx.companyId, isArchived: false },
       }),
       prisma.warehouse.findMany({
-        where: { companyId: ctx.companyId, isActive: true },
+        where: { ...(ctx.warehouseIds.length ? { id: { in: ctx.warehouseIds } } : {}), ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId, isActive: true },
       }),
       prisma.branch.findMany({
-        where: { companyId: ctx.companyId, isActive: true },
+        where: { ...(ctx.branchIds.length ? { id: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId, isActive: true },
       }),
     ]);
 
@@ -84,11 +84,14 @@ export async function POST(req: Request) {
 
     if (body.action === "approve") {
       const ctx = await requirePermission("sales_order:approve");
+      await assertResourceAccess(ctx, "salesOrder", body.id);
+    await assertRequestAccess(ctx, body);
       const so = await approveSalesOrder(ctx.companyId, ctx.user.id, String(body.id));
       return { salesOrder: { id: so.id, status: so.status } };
     }
 
     const ctx = await requirePermission("sales_order:create");
+    await assertRequestAccess(ctx, body);
     const so = await createSalesOrder({
       companyId: ctx.companyId,
       userId: ctx.user.id,

@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import { pageMeta, parsePageParams } from "@/lib/pagination";
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("product:view");
     const { searchParams } = new URL(req.url);
     const { page, limit, skip } = parsePageParams(searchParams);
 
@@ -77,6 +77,7 @@ export async function POST(req: Request) {
       description?: string;
       code?: string;
     };
+    await assertRequestAccess(ctx, body);
 
     if (body.action === "category") {
       const category = await createCategory({

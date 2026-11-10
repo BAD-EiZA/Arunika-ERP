@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import {
   deleteApprovalMatrix,
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("account:view");
     const rows = await listApprovalMatrix(ctx.companyId);
     return {
       matrix: rows.map((r) => ({
@@ -39,6 +39,7 @@ export async function POST(req: Request) {
       stepOrder?: number;
       isActive?: boolean;
     };
+    await assertRequestAccess(ctx, body);
 
     if (body.action === "delete") {
       const row = await deleteApprovalMatrix(

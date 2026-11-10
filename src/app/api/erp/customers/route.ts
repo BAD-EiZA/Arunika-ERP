@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import { pageMeta, parsePageParams } from "@/lib/pagination";
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("customer:view");
     const { searchParams } = new URL(req.url);
     const { page, limit, skip } = parsePageParams(searchParams);
     const where = { companyId: ctx.companyId };
@@ -51,6 +51,7 @@ export async function POST(req: Request) {
       email?: string;
       phone?: string;
     };
+    await assertRequestAccess(ctx, body);
     const customer = await createCustomer({
       companyId: ctx.companyId,
       code: String(body.code ?? ""),

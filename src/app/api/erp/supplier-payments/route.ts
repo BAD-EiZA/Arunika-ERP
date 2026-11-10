@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requireIdempotencyKey, assertResourceAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import { postSupplierPayment } from "@/server/services/procurement";
@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("supplier_payment:view");
     const [payments, openBills] = await Promise.all([
       prisma.supplierPayment.findMany({
         where: { companyId: ctx.companyId },
@@ -46,6 +46,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   return withApiHandler(async () => {
+    const idempotencyKey = requireIdempotencyKey(req);
     const ctx = await requirePermission("supplier_payment:create");
     const body = (await req.json()) as {
       supplierId?: string;
@@ -54,7 +55,11 @@ export async function POST(req: Request) {
       reference?: string;
       method?: string;
     };
+    await assertRequestAccess(ctx, body);
+    await assertResourceAccess(ctx, "supplier", body.supplierId);
+    await assertResourceAccess(ctx, "supplierBill", body.billId);
     const payment = await postSupplierPayment({
+      idempotencyKey,
       companyId: ctx.companyId,
       userId: ctx.user.id,
       supplierId: String(body.supplierId ?? ""),

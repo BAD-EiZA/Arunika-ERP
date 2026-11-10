@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("return:view");
     const [creditNotes, debitNotes, salesReturns, purchaseReturns, customers] =
       await Promise.all([
         prisma.creditNote.findMany({
@@ -25,12 +25,12 @@ export async function GET() {
           take: 50,
         }),
         prisma.salesReturn.findMany({
-          where: { companyId: ctx.companyId, status: "POSTED" },
+          where: { ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}),  companyId: ctx.companyId, status: "POSTED" },
           orderBy: { createdAt: "desc" },
           take: 50,
         }),
         prisma.purchaseReturn.findMany({
-          where: { companyId: ctx.companyId, status: "POSTED" },
+          where: { ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}),  companyId: ctx.companyId, status: "POSTED" },
           orderBy: { createdAt: "desc" },
           take: 50,
         }),
@@ -88,6 +88,7 @@ export async function POST(req: Request) {
 
     if (body.action === "from_purchase_return") {
       const ctx = await requirePermission("debit_note:create");
+    await assertRequestAccess(ctx, body);
       const note = await createDebitNoteFromPurchaseReturn({
         companyId: ctx.companyId,
         userId: ctx.user.id,
@@ -99,6 +100,7 @@ export async function POST(req: Request) {
 
     if (body.action === "manual") {
       const ctx = await requirePermission("credit_note:create");
+    await assertRequestAccess(ctx, body);
       const note = await createCreditNoteManual({
         companyId: ctx.companyId,
         userId: ctx.user.id,
@@ -111,6 +113,7 @@ export async function POST(req: Request) {
     }
 
     const ctx = await requirePermission("credit_note:create");
+    await assertRequestAccess(ctx, body);
     const note = await createCreditNoteFromReturn({
       companyId: ctx.companyId,
       userId: ctx.user.id,

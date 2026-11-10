@@ -14,6 +14,21 @@ type JournalLineInput = {
   tag?: string;
 };
 
+function validateJournalLines(lines: JournalLineInput[]) {
+  if (lines.length < 2) throw validationError("Jurnal minimal 2 baris");
+  for (const line of lines) {
+    const debit = money(line.debit ?? 0);
+    const credit = money(line.credit ?? 0);
+    if (!line.accountCode?.trim() || !debit.isFinite() || !credit.isFinite() || debit.lt(0) || credit.lt(0) || debit.gt(0) === credit.gt(0) || debit.decimalPlaces() > 2 || credit.decimalPlaces() > 2) {
+      throw validationError("Baris jurnal harus memiliki satu debit/credit positif dengan maksimal 2 desimal");
+    }
+  }
+  if (!sumMoney(lines.map(l => l.debit ?? 0)).equals(sumMoney(lines.map(l => l.credit ?? 0)))) {
+    throw validationError("Jurnal tidak seimbang");
+  }
+  return lines;
+}
+
 async function resolveCostCenters(
   tx: Tx,
   companyId: string,
@@ -65,33 +80,22 @@ export async function postJournal(
     if (existing) return existing;
   }
 
-  const lines = input.lines.filter((l) => {
-    const debit = money(l.debit == null ? 0 : l.debit);
-    const credit = money(l.credit == null ? 0 : l.credit);
-    return debit.gt(0) || credit.gt(0);
-  });
-  if (lines.length < 2) {
-    throw validationError("Jurnal minimal 2 baris");
-  }
-
-  const totalDebit = sumMoney(lines.map((l) => l.debit ?? 0));
-  const totalCredit = sumMoney(lines.map((l) => l.credit ?? 0));
-  if (!totalDebit.equals(totalCredit)) {
-    throw validationError(
-      `Jurnal tidak seimbang: debit ${totalDebit} != credit ${totalCredit}`,
-    );
-  }
+  const lines = validateJournalLines(input.lines);
 
   const status = input.status ?? "POSTED";
   const postingDate = input.postingDate ?? new Date();
+  if (!Number.isFinite(postingDate.getTime())) throw validationError("Tanggal tidak valid");
   const period = await tx.fiscalPeriod.findFirst({
     where: {
       fiscalYear: { companyId: input.companyId },
       startDate: { lte: postingDate },
       endDate: { gte: postingDate },
     },
+    include: { fiscalYear: true },
   });
-  if (status === "POSTED" && period && period.status !== "OPEN") {
+  if (!period) throw validationError("Periode akuntansi tidak ditemukan");
+  if (period.fiscalYear.isClosed) throw conflict("tahun fiskal sudah ditutup");
+  if (status === "POSTED" && period.status !== "OPEN") {
     throw conflict("Periode akuntansi sudah ditutup");
   }
 
@@ -101,6 +105,7 @@ export async function postJournal(
   });
   const accountByCode = new Map(accounts.map((a) => [a.code, a]));
   for (const code of accountCodes) {
+    if (accountByCode.get(code)?.isActive === false) throw validationError(`Akun ${code} tidak aktif`);
     if (!accountByCode.has(code)) {
       throw validationError(`Akun ${code} tidak ditemukan`);
     }
@@ -108,7 +113,7 @@ export async function postJournal(
 
   const ccMap = await resolveCostCenters(tx, input.companyId, lines);
   const rate = money(input.exchangeRate ?? 1);
-  if (rate.lte(0)) throw validationError("Kurs harus > 0");
+  if (!rate.isFinite() || rate.lte(0)) throw validationError("Kurs harus > 0");
 
   const number = await nextDocumentNumber(tx, input.companyId, "JE");
 
@@ -182,7 +187,9 @@ export async function postFromRule(
   });
 
   if (!rule || rule.versions.length === 0) {
-    return null;
+    throw conflict(
+      `Posting rule ${input.companyId}:${input.sourceEvent} tidak ditemukan / tidak aktif`,
+    );
   }
 
   const config = rule.versions[0].config as {
@@ -211,7 +218,7 @@ export async function postFromRule(
         { accountCode: "4100", credit: base },
         ...(tax.gt(0) ? [{ accountCode: "2120", credit: tax }] : []),
       ],
-    }).catch(() => null);
+    });
   }
 
   if (input.sourceEvent === "supplier_bill.open") {
@@ -228,7 +235,7 @@ export async function postFromRule(
         ...(tax.gt(0) ? [{ accountCode: "1140", debit: tax }] : []),
         { accountCode: "2100", credit: gross },
       ],
-    }).catch(() => null);
+    });
   }
 
   if (input.sourceEvent === "credit_note.issue") {
@@ -245,7 +252,7 @@ export async function postFromRule(
         ...(tax.gt(0) ? [{ accountCode: "2120", debit: tax }] : []),
         { accountCode: "1120", credit: gross },
       ],
-    }).catch(() => null);
+    });
   }
 
   if (input.sourceEvent === "debit_note.issue") {
@@ -261,7 +268,7 @@ export async function postFromRule(
         { accountCode: "2100", debit: base },
         { accountCode: "1130", credit: base },
       ],
-    }).catch(() => null);
+    });
   }
 
   // delivery_order.post: COGS with optional variance lines
@@ -299,10 +306,10 @@ export async function postFromRule(
       lines,
       idempotencyKey: input.idempotencyKey,
       postedById: input.postedById,
-    }).catch(() => null);
+    });
   }
 
-  const lines = config.lines.map((l) => {
+  const lines = config.lines.filter(l => !l.tax || tax.gt(0)).map((l) => {
     const amount = l.tax ? tax : base;
     return {
       accountCode: l.accountCode,
@@ -311,8 +318,7 @@ export async function postFromRule(
     };
   });
 
-  try {
-    return await postJournal(tx, {
+  return postJournal(tx, {
       companyId: input.companyId,
       sourceModule: "auto",
       sourceDocType: input.sourceDocType,
@@ -322,9 +328,6 @@ export async function postFromRule(
       idempotencyKey: input.idempotencyKey,
       postedById: input.postedById,
     });
-  } catch {
-    return null;
-  }
 }
 
 export async function postManualJournal(input: {
@@ -382,19 +385,7 @@ export async function saveDraftJournal(input: {
       });
       if (!existing) throw notFound("Draft jurnal tidak ditemukan");
 
-      const lines = input.lines.filter((l) => {
-        const debit = money(l.debit == null ? 0 : l.debit);
-        const credit = money(l.credit == null ? 0 : l.credit);
-        return debit.gt(0) || credit.gt(0);
-      });
-      if (lines.length < 2) throw validationError("Jurnal minimal 2 baris");
-      const totalDebit = sumMoney(lines.map((l) => l.debit ?? 0));
-      const totalCredit = sumMoney(lines.map((l) => l.credit ?? 0));
-      if (!totalDebit.equals(totalCredit)) {
-        throw validationError(
-          `Jurnal tidak seimbang: debit ${totalDebit} != credit ${totalCredit}`,
-        );
-      }
+      const lines = validateJournalLines(input.lines);
 
       const accountCodes = [...new Set(lines.map((l) => l.accountCode))];
       const accounts = await tx.account.findMany({
@@ -402,12 +393,16 @@ export async function saveDraftJournal(input: {
       });
       const accountByCode = new Map(accounts.map((a) => [a.code, a]));
       for (const code of accountCodes) {
+        if (accountByCode.get(code)?.isActive === false) throw validationError(`Akun ${code} tidak aktif`);
         if (!accountByCode.has(code)) {
           throw validationError(`Akun ${code} tidak ditemukan`);
         }
       }
       const ccMap = await resolveCostCenters(tx, input.companyId, lines);
       const postingDate = input.postingDate ?? existing.postingDate;
+      if (!Number.isFinite(postingDate.getTime())) throw validationError("Tanggal tidak valid");
+      const rate = money(input.exchangeRate ?? existing.exchangeRate);
+      if (!rate.isFinite() || rate.lte(0)) throw validationError("Kurs harus > 0");
 
       await tx.journalLine.deleteMany({ where: { journalId: existing.id } });
       return tx.journal.update({
@@ -416,9 +411,7 @@ export async function saveDraftJournal(input: {
           description: input.description || existing.description,
           postingDate,
           currency: input.currency || existing.currency,
-          exchangeRate: toPrismaMoney(
-            money(input.exchangeRate ?? existing.exchangeRate),
-          ),
+          exchangeRate: toPrismaMoney(rate),
           lines: {
             create: lines.map((l) => ({
               accountId: accountByCode.get(l.accountCode)!.id,
@@ -456,16 +449,31 @@ export async function postDraftJournal(input: {
       include: { lines: true },
     });
     if (!draft) throw notFound("Draft jurnal tidak ditemukan");
-    if (draft.lines.length < 2) throw validationError("Jurnal minimal 2 baris");
+    validateJournalLines(
+      draft.lines.map((l) => ({
+        accountCode: l.accountId,
+        debit: l.debit,
+        credit: l.credit,
+      })),
+    );
 
+    const accountIds = [...new Set(draft.lines.map(l => l.accountId))];
+    const accounts = await tx.account.findMany({ where: { companyId: input.companyId, id: { in: accountIds }, isActive: true } });
+    if (accountIds.some(id => !accounts.some(a => a.id === id))) throw validationError("Akun jurnal tidak ditemukan / tidak aktif");
+    const rate = money(draft.exchangeRate);
+    if (!rate.isFinite() || rate.lte(0)) throw validationError("Kurs harus > 0");
+    if (!Number.isFinite(draft.postingDate.getTime())) throw validationError("Tanggal tidak valid");
     const period = await tx.fiscalPeriod.findFirst({
       where: {
         fiscalYear: { companyId: input.companyId },
         startDate: { lte: draft.postingDate },
         endDate: { gte: draft.postingDate },
       },
+      include: { fiscalYear: true },
     });
-    if (period && period.status !== "OPEN") {
+    if (!period) throw validationError("Periode akuntansi tidak ditemukan");
+    if (period.fiscalYear.isClosed) throw conflict("tahun fiskal sudah ditutup");
+    if (period.status !== "OPEN") {
       throw conflict("Periode akuntansi sudah ditutup");
     }
 

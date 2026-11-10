@@ -3,6 +3,8 @@ import { writeAudit } from "@/lib/audit";
 import { nextDocumentNumber } from "@/lib/document-number";
 import { conflict, notFound, validationError } from "@/lib/errors";
 import { newIdempotencyKey } from "@/lib/idempotency";
+import { createHash } from "node:crypto";
+import { Decimal } from "decimal.js";
 import {
   lineTotal,
   money,
@@ -39,12 +41,14 @@ function calcHeader(items: ReturnType<typeof mapItems>) {
 
 function mapItems(items: LineInput[]) {
   if (!items.length) throw validationError("Minimal 1 item");
+  if (new Set(items.map((i) => i.productId)).size !== items.length) throw validationError("Produk duplikat");
   return items.map((item) => {
     const quantity = qty(item.quantity);
     const unitPrice = money(item.unitPrice);
+    if (!quantity.isFinite() || !unitPrice.isFinite() || unitPrice.lt(0)) throw validationError("Harga/kuantitas tidak valid");
     const discountAmount = money(item.discountAmount ?? 0);
     const taxAmount = money(item.taxAmount ?? 0);
-    if (quantity.lte(0)) throw validationError("Kuantitas harus > 0");
+    if (quantity.lte(0) || discountAmount.lt(0) || taxAmount.lt(0) || discountAmount.gt(quantity.mul(unitPrice))) throw validationError("Kuantitas harus > 0");
     return {
       productId: item.productId,
       description: item.description,
@@ -57,6 +61,57 @@ function mapItems(items: LineInput[]) {
   });
 }
 
+export async function createPurchaseContract(input: {
+  companyId: string; userId: string; supplierId: string; effectiveFrom: Date; effectiveTo: Date;
+  ceilingAmount: string | number; items: Array<{ productId: string; quantity: string | number; ceilingAmount: string | number; unitPrice: string | number }>;
+}) {
+  if (!Number.isFinite(input.effectiveFrom.getTime()) || !Number.isFinite(input.effectiveTo.getTime()) || input.effectiveFrom >= input.effectiveTo) throw validationError("Periode kontrak tidak valid");
+  if (!input.items.length || new Set(input.items.map((i) => i.productId)).size !== input.items.length) throw validationError("Item kontrak tidak valid");
+  const ceiling = money(input.ceilingAmount);
+  if (!ceiling.isFinite() || ceiling.lte(0)) throw validationError("Plafon kontrak harus positif");
+  const items = input.items.map((i) => {
+    const quantity = qty(i.quantity), cap = money(i.ceilingAmount), price = money(i.unitPrice);
+    if (!quantity.isFinite() || quantity.lte(0) || !cap.isFinite() || cap.lte(0) || !price.isFinite() || price.lt(0) || price.mul(quantity).gt(cap)) throw validationError("Plafon item tidak valid");
+    return { productId: i.productId, quantity: toPrismaDecimal(quantity), ceilingAmount: toPrismaMoney(cap), unitPrice: toPrismaDecimal(price) };
+  });
+  if (sumMoney(items.map((i) => i.ceilingAmount)).gt(ceiling)) throw validationError("Total plafon item melebihi kontrak");
+  return prisma.$transaction(async (tx) => tx.purchaseContract.create({ data: {
+    companyId: input.companyId, supplierId: input.supplierId, number: await nextDocumentNumber(tx, input.companyId, "PC"),
+    status: "DRAFT", startDate: input.effectiveFrom, endDate: input.effectiveTo,
+    ceilingAmount: toPrismaMoney(ceiling), items: { create: items },
+  }, include: { items: true } }));
+}
+
+export async function approvePurchaseContract(companyId: string, userId: string, id: string) {
+  const result = await prisma.purchaseContract.updateMany({ where: { id, companyId, status: "PENDING_APPROVAL" }, data: { status: "APPROVED" } });
+  if (!result.count) throw conflict("Kontrak belum menunggu persetujuan");
+  return prisma.purchaseContract.findFirst({ where: { id, companyId }, include: { items: true } });
+}
+
+export async function amendPurchaseContract(input: { companyId: string; id: string; ceilingAmount: string | number; items: Array<{ productId: string; quantity: string | number; ceilingAmount: string | number }> }) {
+  return prisma.$transaction(async (tx) => {
+    const contract = await tx.purchaseContract.findFirst({ where: { id: input.id, companyId: input.companyId }, include: { items: true } });
+    if (!contract) throw notFound("Kontrak tidak ditemukan");
+    if (contract.status !== "APPROVED") throw conflict("Kontrak belum disetujui");
+    const ceiling = money(input.ceilingAmount);
+    if (!ceiling.isFinite() || ceiling.lt(money(contract.ceilingAmount ?? 0))) throw validationError("Amendment hanya boleh menaikkan plafon");
+    if (input.items.length !== contract.items.length || new Set(input.items.map((i) => i.productId)).size !== contract.items.length) throw validationError("Item amendment tidak sesuai");
+    for (const item of input.items) {
+      const old = contract.items.find((i) => i.productId === item.productId);
+      if (!old || !qty(item.quantity).isFinite() || qty(item.quantity).lt(qty(old.quantity ?? 0)) || !money(item.ceilingAmount).isFinite() || money(item.ceilingAmount).lt(money(old.ceilingAmount))) throw validationError("Amendment hanya boleh menaikkan plafon");
+    }
+    if (sumMoney(input.items.map((i) => i.ceilingAmount)).gt(ceiling)) throw validationError("Total plafon item melebihi kontrak");
+    const updated = await tx.purchaseContract.updateMany({ where: { id: contract.id, version: contract.version, status: "APPROVED" }, data: { version: { increment: 1 }, status: "PENDING_APPROVAL", ceilingAmount: toPrismaMoney(ceiling) } });
+    if (!updated.count) throw conflict("Kontrak berubah");
+    for (const item of input.items) await tx.purchaseContractItem.update({ where: { id: contract.items.find((i) => i.productId === item.productId)!.id }, data: { quantity: toPrismaDecimal(qty(item.quantity)), ceilingAmount: toPrismaMoney(money(item.ceilingAmount)) } });
+    return tx.purchaseContract.findFirst({ where: { id: contract.id }, include: { items: true } });
+  }, { isolationLevel: "Serializable" });
+}
+
+export async function listPurchaseContracts(companyId: string) {
+  return prisma.purchaseContract.findMany({ where: { companyId }, include: { items: true, orders: { select: { id: true, number: true, total: true, status: true } } }, orderBy: { createdAt: "desc" } });
+}
+
 export async function createPurchaseOrder(input: {
   companyId: string;
   userId: string;
@@ -64,12 +119,38 @@ export async function createPurchaseOrder(input: {
   branchId?: string;
   warehouseId?: string;
   notes?: string;
+  contractId?: string;
+  idempotencyKey?: string;
   items: LineInput[];
 }) {
   const items = mapItems(input.items);
   const header = calcHeader(items);
 
   return prisma.$transaction(async (tx) => {
+    if (input.contractId) {
+      if (!input.idempotencyKey?.trim()) throw validationError("Idempotency key wajib untuk call-off");
+      const hash = createHash("sha256").update(JSON.stringify({ supplierId: input.supplierId, contractId: input.contractId, items })).digest("hex");
+      const existing = await tx.purchaseOrder.findFirst({ where: { companyId: input.companyId, idempotencyKey: input.idempotencyKey } });
+      if (existing) {
+        if (existing.requestHash !== hash) throw conflict("Idempotensi: payload berbeda");
+        return existing;
+      }
+      const contract = await tx.purchaseContract.findFirst({ where: { id: input.contractId, companyId: input.companyId }, include: { items: true } });
+      if (!contract) throw notFound("Kontrak tidak ditemukan");
+      const now = new Date();
+      if (contract.status !== "APPROVED" || !contract.isActive || (contract.startDate && contract.startDate > now) || (contract.endDate && contract.endDate < now)) throw conflict("Kontrak tidak aktif/berlaku");
+      if (contract.supplierId !== input.supplierId) throw conflict("Pemasok kontrak tidak sesuai");
+      const amount = money(header.total);
+      if (amount.lte(0) || !contract.ceilingAmount || money(contract.usedAmount).plus(amount).gt(money(contract.ceilingAmount ?? 0))) throw conflict("Plafon nilai kontrak terlampaui");
+      const reserved = await tx.purchaseContract.updateMany({ where: { id: contract.id, version: contract.version, status: "APPROVED", usedAmount: contract.usedAmount }, data: { usedAmount: { increment: toPrismaMoney(amount) } } });
+      if (!reserved.count) throw conflict("Kontrak berubah; ulangi call-off");
+      for (const item of items) {
+        const limit = contract.items.find((i) => i.productId === item.productId);
+        if (!limit || !limit.quantity || qty(limit.usedQuantity).plus(qty(item.quantity)).gt(qty(limit.quantity)) || money(limit.usedAmount).plus(money(item.total)).gt(money(limit.ceilingAmount))) throw conflict("Plafon item kontrak terlampaui");
+        const claimed = await tx.purchaseContractItem.updateMany({ where: { id: limit.id, usedQuantity: limit.usedQuantity, usedAmount: limit.usedAmount }, data: { usedQuantity: { increment: item.quantity }, usedAmount: { increment: item.total } } });
+        if (!claimed.count) throw conflict("Kontrak berubah; ulangi call-off");
+      }
+    }
     const number = await nextDocumentNumber(tx, input.companyId, "PO", input.branchId);
     const po = await tx.purchaseOrder.create({
       data: {
@@ -77,6 +158,9 @@ export async function createPurchaseOrder(input: {
         supplierId: input.supplierId,
         branchId: input.branchId,
         warehouseId: input.warehouseId,
+        contractId: input.contractId,
+        idempotencyKey: input.contractId ? input.idempotencyKey : undefined,
+        requestHash: input.contractId ? createHash("sha256").update(JSON.stringify({ supplierId: input.supplierId, contractId: input.contractId, items })).digest("hex") : undefined,
         number,
         status: "DRAFT",
         notes: input.notes,
@@ -95,7 +179,7 @@ export async function createPurchaseOrder(input: {
       entityNumber: po.number,
     });
     return po;
-  });
+  }, { isolationLevel: "Serializable" });
 }
 
 export async function submitPurchaseOrder(companyId: string, userId: string, id: string) {
@@ -156,10 +240,14 @@ export async function postGoodsReceipt(input: {
 }) {
   return prisma.$transaction(async (tx) => {
     const key = input.idempotencyKey ?? newIdempotencyKey("gr");
+    const requestHash = createHash("sha256").update(JSON.stringify({ purchaseOrderId: input.purchaseOrderId, warehouseId: input.warehouseId, notes: input.notes ?? null, supplierDeliveryNote: input.supplierDeliveryNote ?? null, items: input.items.map(i => ({ productId: i.productId, quantityReceived: qty(i.quantityReceived).toString(), unitCost: i.unitCost == null ? null : money(i.unitCost).toString() })) })).digest("hex");
     const existing = await tx.goodsReceipt.findUnique({
       where: { companyId_idempotencyKey: { companyId: input.companyId, idempotencyKey: key } },
     });
-    if (existing) return existing;
+    if (existing) {
+      if (existing.requestHash !== requestHash) throw conflict("Idempotensi: payload berbeda untuk key yang sama");
+      return existing;
+    }
 
     const po = await tx.purchaseOrder.findFirst({
       where: { id: input.purchaseOrderId, companyId: input.companyId },
@@ -171,6 +259,7 @@ export async function postGoodsReceipt(input: {
     }
 
     if (!input.items.length) throw validationError("Minimal 1 item diterima");
+    if (new Set(input.items.map((i) => i.productId)).size !== input.items.length || new Set(po.items.map((i) => i.productId)).size !== po.items.length) throw validationError("Produk duplikat");
     const number = await nextDocumentNumber(tx, input.companyId, "GR");
     const grItems = input.items.map((item) => {
       const poItem = po.items.find((i) => i.productId === item.productId);
@@ -202,6 +291,7 @@ export async function postGoodsReceipt(input: {
         postedAt: new Date(),
         createdById: input.userId,
         idempotencyKey: key,
+        requestHash,
         items: { create: grItems },
       },
       include: { items: true },
@@ -270,7 +360,7 @@ export async function postGoodsReceipt(input: {
     });
 
     return gr;
-  }, { maxWait: 15000, timeout: 60000 });
+  }, { maxWait: 15000, timeout: 60000, isolationLevel: "Serializable" });
 }
 
 export async function createSupplierBill(input: {
@@ -290,6 +380,7 @@ export async function createSupplierBill(input: {
 }) {
   if (!input.items.length) throw validationError("Minimal 1 item");
   const lines = input.items.map((i) => {
+    if (!qty(i.quantity).isFinite() || qty(i.quantity).lte(0) || !money(i.unitPrice).isFinite() || money(i.unitPrice).lt(0)) throw validationError("Item tagihan tidak valid");
     const total = lineTotal(i.quantity, i.unitPrice, 0, i.taxAmount ?? 0);
     return {
       productId: i.productId,
@@ -305,6 +396,14 @@ export async function createSupplierBill(input: {
   const total = subtotal.plus(taxAmount);
 
   return prisma.$transaction(async (tx) => {
+    const supplierInvoiceNo = input.supplierInvoiceNo?.trim() || undefined;
+    if (supplierInvoiceNo && await tx.supplierBill.findFirst({ where: { companyId: input.companyId, supplierId: input.supplierId, supplierInvoiceNo } })) throw conflict("Nomor invoice pemasok sudah digunakan");
+    if (input.purchaseOrderId) {
+      const po = await tx.purchaseOrder.findFirst({ where: { id: input.purchaseOrderId, companyId: input.companyId } });
+      if (!po || po.supplierId !== input.supplierId) throw conflict("Pemasok PO tidak sesuai");
+      const receipts = await tx.goodsReceipt.findMany({ where: { purchaseOrderId: po.id, companyId: input.companyId } });
+      if (receipts.some((gr) => gr.supplierId !== input.supplierId)) throw conflict("Pemasok GR tidak sesuai");
+    }
     const number = await nextDocumentNumber(tx, input.companyId, "SB");
     const bill = await tx.supplierBill.create({
       data: {
@@ -312,7 +411,7 @@ export async function createSupplierBill(input: {
         supplierId: input.supplierId,
         purchaseOrderId: input.purchaseOrderId,
         number,
-        supplierInvoiceNo: input.supplierInvoiceNo,
+        supplierInvoiceNo,
         status: "OPEN",
         dueDate: input.dueDate,
         subtotal: toPrismaMoney(subtotal),
@@ -337,7 +436,7 @@ export async function createSupplierBill(input: {
     });
 
     return bill;
-  });
+  }, { isolationLevel: "Serializable" });
 }
 
 export async function postSupplierPayment(input: {
@@ -347,16 +446,37 @@ export async function postSupplierPayment(input: {
   amount: number | string;
   method?: string;
   reference?: string;
+  idempotencyKey?: string;
   allocations: Array<{ billId: string; amount: number | string }>;
 }) {
   const amount = money(input.amount);
   if (amount.lte(0)) throw validationError("Jumlah pembayaran harus > 0");
+  if (!input.allocations.length) throw validationError("Minimal 1 alokasi");
+  if (input.allocations.some((a) => money(a.amount).lte(0))) throw validationError("Alokasi harus > 0");
+  if (new Set(input.allocations.map((a) => a.billId)).size !== input.allocations.length) throw validationError("Alokasi duplikat");
   const allocTotal = sumMoney(input.allocations.map((a) => a.amount));
   if (!allocTotal.equals(amount)) {
     throw validationError("Total alokasi harus sama dengan jumlah pembayaran");
   }
 
+  const requestHash = input.idempotencyKey ? createHash("sha256").update(JSON.stringify({
+    partnerId: input.supplierId, amount: amount.toFixed(2),
+    method: input.method ?? "BANK_TRANSFER", reference: input.reference ?? null,
+    allocations: input.allocations.map((a) => [a.billId, money(a.amount).toFixed(2)])
+      .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0),
+  })).digest("hex") : undefined;
+
   return prisma.$transaction(async (tx) => {
+    if (input.idempotencyKey) {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify(["sp", input.companyId, input.idempotencyKey])}, 0))::text`;
+      const existing = await tx.supplierPayment.findUnique({
+        where: { companyId_idempotencyKey: { companyId: input.companyId, idempotencyKey: input.idempotencyKey } },
+      });
+      if (existing) {
+        if (existing.requestHash !== requestHash) throw conflict("Idempotensi: payload berbeda untuk key yang sama");
+        return existing;
+      }
+    }
     const number = await nextDocumentNumber(tx, input.companyId, "SP");
     const payment = await tx.supplierPayment.create({
       data: {
@@ -367,6 +487,8 @@ export async function postSupplierPayment(input: {
         method: input.method ?? "BANK_TRANSFER",
         amount: toPrismaMoney(amount),
         reference: input.reference,
+        idempotencyKey: input.idempotencyKey || undefined,
+        requestHash,
         postedAt: new Date(),
         createdById: input.userId,
         allocations: {
@@ -383,10 +505,16 @@ export async function postSupplierPayment(input: {
         where: { id: a.billId, companyId: input.companyId },
       });
       if (!bill) throw notFound("Tagihan tidak ditemukan");
+      if (bill.purchaseOrderId) {
+        const match = await tx.threeWayMatch.findFirst({ where: { companyId: input.companyId, supplierBillId: bill.id }, orderBy: { createdAt: "desc" } });
+        if (!match?.isMatched || match.status !== "APPROVED") throw conflict("Three-way match belum disetujui");
+      }
       const pay = money(a.amount);
+      if (bill.supplierId !== input.supplierId) throw conflict("Pemasok tagihan tidak sesuai");
+      if (!["OPEN", "PARTIALLY_PAID", "OVERDUE"].includes(bill.status)) throw conflict("Tagihan tidak bisa dibayar");
       if (pay.gt(money(bill.balance))) throw conflict("Alokasi melebihi saldo tagihan");
       const amountPaid = money(bill.amountPaid).plus(pay);
-      const balance = money(bill.total).minus(amountPaid);
+      const balance = money(bill.balance).minus(pay);
       await tx.supplierBill.update({
         where: { id: bill.id },
         data: {
@@ -409,7 +537,7 @@ export async function postSupplierPayment(input: {
     });
 
     return payment;
-  });
+  }, { isolationLevel: "ReadCommitted" });
 }
 
 // Advanced procurement
@@ -533,6 +661,10 @@ export async function awardRfq(input: {
   branchId?: string;
 }) {
   return prisma.$transaction(async (tx) => {
+    const rfq = await tx.requestForQuotation.findFirst({ where: { id: input.rfqId, companyId: input.companyId } });
+    if (!rfq) throw notFound("RFQ tidak ditemukan");
+    if (rfq.status === "CLOSED") throw conflict("RFQ sudah ditutup");
+
     const quotation = await tx.vendorQuotation.findFirst({
       where: { id: input.quotationId, companyId: input.companyId, rfqId: input.rfqId },
       include: { items: true },
@@ -591,7 +723,7 @@ export async function awardRfq(input: {
       include: { items: true },
     });
     return { quotation, purchaseOrder: po };
-  });
+  }, { isolationLevel: "Serializable" });
 }
 
 export async function reviewThreeWayMatch(input: {
@@ -610,15 +742,46 @@ export async function reviewThreeWayMatch(input: {
   });
   if (!gr || !bill) throw notFound("Dokumen match tidak lengkap");
 
-  const grQty = sumMoney(gr.items.map((i) => i.quantityReceived));
-  const billQty = sumMoney(bill.items.map((i) => i.quantity));
+  if (!gr.purchaseOrderId) throw validationError("GR tanpa PO tidak bisa match");
+  if (bill.purchaseOrderId && bill.purchaseOrderId !== gr.purchaseOrderId) throw validationError("Bill dan GR dari PO berbeda");
+  if (gr.supplierId !== bill.supplierId) throw validationError("Pemasok GR dan bill tidak sesuai");
+  if (gr.status !== "POSTED") throw validationError("GR belum diposting");
+  if (bill.status === "PAID" || bill.status === "VOID") throw validationError("Bill tidak bisa di-match");
+
+  const grLines = new Set(gr.items.map((i) => i.productId).filter(Boolean));
+  const unknown = bill.items.filter((i) => i.productId && !grLines.has(i.productId));
+  if (unknown.length) throw validationError("Item bill tidak ada di GR");
+
+  const qtyByProduct = new Map<string, Decimal>();
+  for (const i of bill.items) {
+    if (!i.productId) continue;
+    qtyByProduct.set(i.productId, (qtyByProduct.get(i.productId) ?? new Decimal(0)).plus(qty(i.quantity)));
+  }
+  const grQtyMap = new Map<string, Decimal>();
+  for (const i of gr.items) {
+    grQtyMap.set(i.productId, (grQtyMap.get(i.productId) ?? new Decimal(0)).plus(qty(i.quantityReceived)));
+  }
+  const qtyVariance = [...qtyByProduct.entries()].reduce(
+    (acc, [pid, q]) => acc.plus(q.minus(grQtyMap.get(pid) ?? new Decimal(0))), new Decimal(0),
+  );
   const grValue = sumMoney(
     gr.items.map((i) => qty(i.quantityReceived).mul(money(i.unitCost))),
   );
   const billValue = money(bill.subtotal);
-  const qtyVariance = billQty.minus(grQty);
   const priceVariance = billValue.minus(grValue);
-  const isMatched = qtyVariance.abs().lte(0.0001) && priceVariance.abs().lte(1);
+  const uniqueLines = (items: Array<{ productId: string | null }>) =>
+    items.every((i) => !!i.productId) && new Set(items.map((i) => i.productId)).size === items.length;
+  const isMatched = uniqueLines(bill.items) && uniqueLines(gr.items) &&
+    bill.purchaseOrderId === gr.purchaseOrderId && gr.purchaseOrder?.supplierId === bill.supplierId &&
+    bill.items.length === gr.items.length && bill.items.every((line) => {
+      const received = gr.items.find((i) => i.productId === line.productId);
+      const ordered = gr.purchaseOrder?.items.find((i) => i.productId === line.productId);
+      return received && ordered && qty(line.quantity).gt(0) &&
+        qty(line.quantity).equals(qty(received.quantityReceived)) &&
+        qty(line.quantity).lte(qty(ordered.quantity)) &&
+        money(line.unitPrice).equals(money(received.unitCost)) &&
+        money(line.unitPrice).equals(money(ordered.unitPrice));
+    }) && priceVariance.abs().lte(0.01);
 
   return prisma.threeWayMatch.create({
     data: {

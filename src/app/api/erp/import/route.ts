@@ -1,4 +1,4 @@
-import { requirePermission } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import {
   importCustomersCsv,
@@ -20,18 +20,22 @@ export async function POST(req: Request) {
 
     if (type === "customers") {
       const ctx = await requirePermission("customer:create");
+    await assertRequestAccess(ctx, body);
       return importCustomersCsv(ctx.companyId, csv);
     }
     if (type === "suppliers") {
       const ctx = await requirePermission("supplier:create");
+    await assertRequestAccess(ctx, body);
       return importSuppliersCsv(ctx.companyId, csv);
     }
     if (type === "opening_stock") {
       const ctx = await requirePermission("stock:adjust");
+    await assertRequestAccess(ctx, body);
       return importOpeningStockCsv(ctx.companyId, ctx.user.id, csv);
     }
 
     const ctx = await requirePermission("product:create");
+    await assertRequestAccess(ctx, body);
     return importProductsCsv(ctx.companyId, csv);
   });
 }

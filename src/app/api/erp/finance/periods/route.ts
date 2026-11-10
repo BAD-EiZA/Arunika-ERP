@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("period:view");
     const years = await prisma.fiscalYear.findMany({
       where: { companyId: ctx.companyId },
       include: { periods: { orderBy: { startDate: "asc" } } },
@@ -47,6 +47,7 @@ export async function POST(req: Request) {
 
     if (body.action === "reopen") {
       const ctx = await requirePermission("period:reopen");
+    await assertRequestAccess(ctx, body);
       const period = await reopenFiscalPeriod(
         ctx.companyId,
         String(body.id ?? ""),
@@ -55,6 +56,7 @@ export async function POST(req: Request) {
     }
     if (body.action === "lock") {
       const ctx = await requirePermission("period:close");
+    await assertRequestAccess(ctx, body);
       const period = await lockFiscalPeriod(
         ctx.companyId,
         String(body.id ?? ""),
@@ -63,6 +65,7 @@ export async function POST(req: Request) {
     }
     if (body.action === "close_year") {
       const ctx = await requirePermission("period:close");
+    await assertRequestAccess(ctx, body);
       const year = await closeFiscalYear({
         companyId: ctx.companyId,
         userId: ctx.user.id,
@@ -72,6 +75,7 @@ export async function POST(req: Request) {
     }
 
     const ctx = await requirePermission("period:close");
+    await assertRequestAccess(ctx, body);
     const period = await closeFiscalPeriod(
       ctx.companyId,
       String(body.id ?? ""),

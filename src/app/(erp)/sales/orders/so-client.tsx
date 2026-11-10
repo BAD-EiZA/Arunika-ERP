@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Badge,
   Button,
@@ -104,17 +104,12 @@ export function SalesOrdersClient() {
   const query = useSalesOrdersQuery();
   const mutation = useSalesOrderMutation();
   const data = query.data;
-  const [lines, setLines] = useState<LineItemDraft[]>([]);
+  const [draftLines, setLines] = useState<LineItemDraft[]>([]);
+  const lines = draftLines.length ? draftLines : data?.products?.length ? createInitialLines(data.products, "sell") : [];
   const [showCreate, setShowCreate] = useState(false);
   const [filter, setFilter] = useState<SoFilter>("ALL");
 
   const orders = data?.orders ?? [];
-
-  useEffect(() => {
-    if (data?.products?.length && lines.length === 0) {
-      setLines(createInitialLines(data.products, "sell"));
-    }
-  }, [data?.products, lines.length]);
 
   const stats = useMemo(() => {
     let draft = 0;

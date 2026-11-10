@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("budget:view");
     const url = new URL(req.url);
     const vs = url.searchParams.get("vsActual");
     if (vs) {
@@ -57,6 +57,7 @@ export async function POST(req: Request) {
         amount: string | number;
       }>;
     };
+    await assertRequestAccess(ctx, body);
 
     if (body.action === "approve") {
       const budget = await approveBudget(ctx.companyId, String(body.id ?? ""));

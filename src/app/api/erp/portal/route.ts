@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
@@ -30,7 +30,7 @@ export async function GET(req: Request) {
       };
     }
 
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("settings:manage");
     const tokens = await prisma.portalToken.findMany({
       where: { companyId: ctx.companyId },
       orderBy: { createdAt: "desc" },
@@ -59,6 +59,7 @@ export async function POST(req: Request) {
       partnerEmail?: string;
       daysValid?: number;
     };
+    await assertRequestAccess(ctx, body);
     const token = await createPortalToken({
       companyId: ctx.companyId,
       portalType: body.portalType ?? "CUSTOMER",

@@ -1,9 +1,26 @@
 import type { Prisma, StockMovementType } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
-import { conflict, validationError } from "@/lib/errors";
+import { conflict, forbidden, validationError } from "@/lib/errors";
 import { money, qty, toPrismaDecimal, toPrismaMoney } from "@/lib/money";
 
 type Tx = Prisma.TransactionClient;
+
+export type WarehouseAccess = { branchIds: string[]; warehouseIds: string[] };
+
+export async function assertWarehouseOwnership(
+  tx: Pick<Tx, "warehouse">,
+  input: { companyId: string; warehouseId: string; access?: WarehouseAccess },
+) {
+  const warehouse = await tx.warehouse.findFirst({
+    where: { id: input.warehouseId, companyId: input.companyId },
+  });
+  if (!warehouse) throw validationError("Gudang tidak ditemukan");
+  if (input.access && (
+    (input.access.branchIds.length > 0 && !input.access.branchIds.includes(warehouse.branchId)) ||
+    (input.access.warehouseIds.length > 0 && !input.access.warehouseIds.includes(warehouse.id))
+  )) throw forbidden("Gudang di luar akses Anda");
+  return warehouse;
+}
 
 type PostMovementInput = {
   companyId: string;
@@ -19,10 +36,13 @@ type PostMovementInput = {
   createdById?: string;
   idempotencyKey?: string;
   allowNegative?: boolean;
+  access?: WarehouseAccess;
 };
 
 export async function postStockMovement(tx: Tx, input: PostMovementInput) {
+  await assertWarehouseOwnership(tx, input);
   if (input.idempotencyKey) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`movement:${input.companyId}:${input.idempotencyKey}`}, 0))`;
     const existing = await tx.stockMovement.findUnique({
       where: {
         companyId_idempotencyKey: {
@@ -46,6 +66,9 @@ export async function postStockMovement(tx: Tx, input: PostMovementInput) {
   if (product.type !== "STOCK") {
     throw validationError("Hanya produk stok yang menghasilkan mutasi");
   }
+
+  // Lock the pair even when its balance row does not exist yet.
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`${input.warehouseId}:${input.productId}`}, 0))`;
 
   const isInbound = [
     "PURCHASE_RECEIPT",
@@ -86,7 +109,8 @@ export async function postStockMovement(tx: Tx, input: PostMovementInput) {
   const onHand = qty(balance.quantityOnHand);
   const nextOnHand = onHand.plus(signedQty);
 
-  if (nextOnHand.lt(0) && !input.allowNegative) {
+  // Reserved deliveries must release their reservation in this transaction first.
+  if (!isInbound && nextOnHand.lt(qty(balance.quantityReserved)) && !input.allowNegative) {
     throw conflict(
       `Stok tidak mencukupi untuk produk ${product.sku} di gudang ini`,
     );
@@ -133,9 +157,16 @@ export async function adjustReservation(
     warehouseId: string;
     productId: string;
     delta: string | number;
+    access?: WarehouseAccess;
   },
 ) {
+  await assertWarehouseOwnership(tx, input);
+  const product = await tx.product.findFirst({
+    where: { id: input.productId, companyId: input.companyId, type: "STOCK" },
+  });
+  if (!product) throw validationError("Produk tidak ditemukan");
   const delta = qty(input.delta);
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`${input.warehouseId}:${input.productId}`}, 0))`;
   let balance = await tx.stockBalance.findUnique({
     where: {
       warehouseId_productId: {
@@ -158,6 +189,9 @@ export async function adjustReservation(
   }
   const next = qty(balance.quantityReserved).plus(delta);
   if (next.lt(0)) throw conflict("Reservasi tidak valid");
+  if (delta.gt(0) && qty(balance.quantityOnHand).minus(next).lt(0)) {
+    throw conflict("Stok tidak mencukupi untuk reservasi");
+  }
   await tx.stockBalance.update({
     where: { id: balance.id },
     data: { quantityReserved: toPrismaDecimal(next) },

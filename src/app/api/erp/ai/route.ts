@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import { runForecastAndAnomaly } from "@/server/services/ai";
@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("report:view");
     const insights = await prisma.aiInsight.findMany({
       where: { companyId: ctx.companyId },
       orderBy: { createdAt: "desc" },

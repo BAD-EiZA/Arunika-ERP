@@ -1,740 +1,87 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Badge,
-  Button,
-  Card,
-  EmptyState,
-  Field,
-  FormGrid,
-  Input,
-  ListPageShell,
-  PageHeader,
-  PaginationBar,
-  Select,
-  StatCard,
-  Table,
-} from "@/components/ui";
+import { Badge, Button, Card, Field, Input, ListPageShell, PageHeader, Select, Table } from "@/components/ui";
 import { MutationError, QueryBoundary } from "@/components/query-state";
-import {
-  useReturnsMutation,
-  useReturnsQuery,
-} from "@/hooks/use-erp-queries";
-import { useClientPage } from "@/hooks/use-client-page";
+import { useReturnsMutation, useReturnsQuery } from "@/hooks/use-erp-queries";
 import { apiGet, apiPost, formToObject } from "@/lib/api-client";
 import { formatIdr } from "@/lib/money";
-import {
-  FileText,
-  PackageMinus,
-  Plus,
-  RotateCcw,
-  ShieldAlert,
-} from "lucide-react";
 
-type ReturnsData = {
-  salesReturns: Array<{
-    id: string;
-    number: string;
-    status: string;
-    total: string;
-    reason: string | null;
-  }>;
-  purchaseReturns: Array<{
-    id: string;
-    number: string;
-    status: string;
-    total: string;
-  }>;
-  claims: Array<{
-    id: string;
-    number: string;
-    claimType: string;
-    status: string;
-    amount: string;
-    partnerName: string | null;
-  }>;
-  customers: Array<{ id: string; name: string }>;
-  suppliers: Array<{ id: string; name: string }>;
-  products: Array<{
-    id: string;
-    sku: string;
-    name: string;
-    salePrice: string;
-    purchasePrice: string;
-  }>;
-  warehouses: Array<{ id: string; code: string }>;
+type ReturnDoc = { id: string; number: string; status: string; total: string; warehouseId: string; disposition?: string; reason?: string; settlementStatus?: string; refundAmount?: string; refundedAt?: string; replacementDeliveryId?: string };
+type SourceItem = { id: string; productId: string; quantity: string; returned: string; description?: string };
+type Data = {
+  warehouses: { id: string; code: string; type: string }[];
+  salesReturns: ReturnDoc[]; purchaseReturns: ReturnDoc[];
+  salesInvoices: { id: string; number: string; customerId: string; warehouseId: string; items: SourceItem[] }[];
+  goodsReceipts: { id: string; number: string; supplierId: string; warehouseId: string; items: SourceItem[] }[];
+  claims: { id: string; number: string; status: string; amount: string; partnerName: string; ownerId?: string; dueAt?: string; evidenceFileId?: string }[];
 };
-
-type FormMode = "none" | "sr" | "pr" | "claim";
-
-function retTone(
-  status: string,
-): "default" | "success" | "warning" | "danger" {
-  const s = status.toUpperCase();
-  if (s === "POSTED" || s === "CLOSED") return "success";
-  if (s === "DRAFT" || s === "PENDING") return "warning";
-  if (s === "CANCELLED" || s === "VOID") return "danger";
-  return "default";
-}
+type Notes = { creditNotes: ReturnDoc[]; debitNotes: ReturnDoc[] };
 
 export function ReturnsClient() {
-  const qc = useQueryClient();
   const query = useReturnsQuery();
   const mutation = useReturnsMutation();
-  const cnQuery = useQuery({
-    queryKey: ["credit-notes"],
-    queryFn: () =>
-      apiGet<{
-        creditNotes: Array<{
-          id: string;
-          number: string;
-          total: string;
-          status: string;
-        }>;
-        debitNotes: Array<{
-          id: string;
-          number: string;
-          total: string;
-          status: string;
-        }>;
-        salesReturns: Array<{ id: string; number: string; total: string }>;
-        purchaseReturns: Array<{ id: string; number: string; total: string }>;
-      }>("/api/erp/credit-notes"),
-  });
-  const cnMutation = useMutation({
-    mutationFn: (body: Record<string, unknown>) =>
-      apiPost("/api/erp/credit-notes", body),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ["credit-notes"] });
-    },
-  });
-  const data = query.data as ReturnsData | undefined;
-  const [formMode, setFormMode] = useState<FormMode>("none");
+  const qc = useQueryClient();
+  const notes = useQuery({ queryKey: ["credit-notes"], queryFn: () => apiGet<Notes>("/api/erp/credit-notes") });
+  const noteMutation = useMutation({ mutationFn: (body: Record<string, unknown>) => apiPost("/api/erp/credit-notes", body), onSuccess: async () => { await qc.invalidateQueries({ queryKey: ["credit-notes"] }); } });
+  const data = query.data as Data | undefined;
+  const [kind, setKind] = useState("sales");
+  const [sourceId, setSourceId] = useState("");
+  const [sourceItemId, setSourceItemId] = useState("");
+  const [requestKey, setRequestKey] = useState("");
+  const [inspection, setInspection] = useState<Record<string, string>>({});
+  const source = kind === "sales" ? data?.salesInvoices.find(s => s.id === sourceId) : data?.goodsReceipts.find(s => s.id === sourceId);
+  const item = source?.items.find(i => i.id === sourceItemId);
 
-  const salesReturnsPage = useClientPage(data?.salesReturns ?? [], 20);
-  const purchaseReturnsPage = useClientPage(data?.purchaseReturns ?? [], 20);
-  const claimsPage = useClientPage(data?.claims ?? [], 20);
-  const notesPage = useClientPage(
-    [
-      ...(cnQuery.data?.creditNotes ?? []).map((n) => ({
-        ...n,
-        noteType: "CN" as const,
-      })),
-      ...(cnQuery.data?.debitNotes ?? []).map((n) => ({
-        ...n,
-        noteType: "DN" as const,
-      })),
-    ],
-    20,
-  );
-
-  const stats = useMemo(() => {
-    return {
-      sr: data?.salesReturns.length ?? 0,
-      pr: data?.purchaseReturns.length ?? 0,
-      claims: data?.claims.length ?? 0,
-      notes:
-        (cnQuery.data?.creditNotes.length ?? 0) +
-        (cnQuery.data?.debitNotes.length ?? 0),
-    };
-  }, [data, cnQuery.data]);
-
-  function toggle(mode: FormMode) {
-    setFormMode((m) => (m === mode ? "none" : mode));
-  }
-
-  return (
-    <ListPageShell>
-      <PageHeader
-        title="Return & Claim"
-        description="Sales/purchase return · credit/debit note · claim"
-        actions={
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant={formMode === "claim" ? "primary" : "secondary"}
-              onClick={() => toggle("claim")}
-            >
-              <ShieldAlert className="mr-1.5 size-4" />
-              Claim
-            </Button>
-            <Button
-              type="button"
-              variant={formMode === "pr" ? "primary" : "secondary"}
-              onClick={() => toggle("pr")}
-            >
-              <PackageMinus className="mr-1.5 size-4" />
-              PR return
-            </Button>
-            <Button
-              type="button"
-              variant={formMode === "sr" ? "secondary" : "primary"}
-              onClick={() => toggle("sr")}
-            >
-              <Plus className="mr-1.5 size-4" />
-              {formMode === "sr" ? "Tutup" : "Sales return"}
-            </Button>
-          </div>
-        }
-      />
-      <QueryBoundary
-        isLoading={query.isLoading}
-        isError={query.isError}
-        error={query.error}
-        onRetry={() => void query.refetch()}
-        loadingLabel="Memuat return & claim..."
-      >
-        {data ? (
-          <>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <StatCard
-                label="Sales return"
-                value={stats.sr}
-                icon={RotateCcw}
-              />
-              <StatCard
-                label="Purchase return"
-                value={stats.pr}
-                icon={PackageMinus}
-              />
-              <StatCard
-                label="Claims"
-                value={stats.claims}
-                icon={ShieldAlert}
-              />
-              <StatCard
-                label="CN / DN"
-                value={stats.notes}
-                icon={FileText}
-              />
-            </div>
-
-            <MutationError error={mutation.error} />
-
-            {formMode === "sr" ? (
-              <Card title="Sales return">
-                <form
-                  className="space-y-3"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const body = formToObject(e.currentTarget);
-                    mutation.mutate(
-                      {
-                        action: "sales_return",
-                        customerId: body.customerId,
-                        warehouseId: body.warehouseId,
-                        reason: body.reason,
-                        items: [
-                          {
-                            productId: body.productId,
-                            quantity: body.quantity,
-                            unitPrice: body.unitPrice,
-                          },
-                        ],
-                      },
-                      {
-                        onSuccess: () => {
-                          e.currentTarget.reset();
-                          setFormMode("none");
-                        },
-                      },
-                    );
-                  }}
-                >
-                  <FormGrid>
-                    <Field label="Pelanggan">
-                      <Select name="customerId" required>
-                        {data.customers.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                    <Field label="Gudang">
-                      <Select
-                        name="warehouseId"
-                        defaultValue={data.warehouses[0]?.id}
-                      >
-                        {data.warehouses.map((w) => (
-                          <option key={w.id} value={w.id}>
-                            {w.code}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                    <Field label="Produk">
-                      <Select name="productId" required>
-                        {data.products.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.sku}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                    <Field label="Qty">
-                      <Input
-                        name="quantity"
-                        type="number"
-                        step="0.0001"
-                        required
-                      />
-                    </Field>
-                    <Field label="Harga">
-                      <Input
-                        name="unitPrice"
-                        type="number"
-                        step="0.01"
-                        required
-                      />
-                    </Field>
-                    <Field label="Alasan">
-                      <Input name="reason" />
-                    </Field>
-                  </FormGrid>
-                  <div className="flex flex-wrap gap-2">
-                    <Button type="submit" disabled={mutation.isPending}>
-                      Buat sales return
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={() => setFormMode("none")}
-                    >
-                      Batal
-                    </Button>
-                  </div>
-                </form>
-              </Card>
-            ) : null}
-
-            {formMode === "pr" ? (
-              <Card title="Purchase return">
-                <form
-                  className="space-y-3"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const body = formToObject(e.currentTarget);
-                    mutation.mutate(
-                      {
-                        action: "purchase_return",
-                        supplierId: body.supplierId,
-                        warehouseId: body.warehouseId,
-                        reason: body.reason,
-                        items: [
-                          {
-                            productId: body.productId,
-                            quantity: body.quantity,
-                            unitCost: body.unitCost,
-                          },
-                        ],
-                      },
-                      {
-                        onSuccess: () => {
-                          e.currentTarget.reset();
-                          setFormMode("none");
-                        },
-                      },
-                    );
-                  }}
-                >
-                  <FormGrid>
-                    <Field label="Pemasok">
-                      <Select name="supplierId" required>
-                        {data.suppliers.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.name}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                    <Field label="Gudang">
-                      <Select
-                        name="warehouseId"
-                        defaultValue={data.warehouses[0]?.id}
-                      >
-                        {data.warehouses.map((w) => (
-                          <option key={w.id} value={w.id}>
-                            {w.code}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                    <Field label="Produk">
-                      <Select name="productId" required>
-                        {data.products.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.sku}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                    <Field label="Qty">
-                      <Input
-                        name="quantity"
-                        type="number"
-                        step="0.0001"
-                        required
-                      />
-                    </Field>
-                    <Field label="Cost">
-                      <Input
-                        name="unitCost"
-                        type="number"
-                        step="0.01"
-                        required
-                      />
-                    </Field>
-                  </FormGrid>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="submit"
-                      variant="secondary"
-                      disabled={mutation.isPending}
-                    >
-                      Buat purchase return
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={() => setFormMode("none")}
-                    >
-                      Batal
-                    </Button>
-                  </div>
-                </form>
-              </Card>
-            ) : null}
-
-            {formMode === "claim" ? (
-              <Card title="Claim">
-                <form
-                  className="space-y-3"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    mutation.mutate(
-                      {
-                        action: "claim",
-                        ...formToObject(e.currentTarget),
-                      },
-                      {
-                        onSuccess: () => {
-                          e.currentTarget.reset();
-                          setFormMode("none");
-                        },
-                      },
-                    );
-                  }}
-                >
-                  <FormGrid>
-                    <Field label="Tipe">
-                      <Select name="claimType" defaultValue="CUSTOMER">
-                        <option value="CUSTOMER">Customer</option>
-                        <option value="SUPPLIER">Supplier</option>
-                        <option value="WARRANTY">Warranty</option>
-                      </Select>
-                    </Field>
-                    <Field label="Partner">
-                      <Input name="partnerName" />
-                    </Field>
-                    <Field label="Jumlah">
-                      <Input
-                        name="amount"
-                        type="number"
-                        step="0.01"
-                        required
-                      />
-                    </Field>
-                    <Field label="Alasan">
-                      <Input name="reason" />
-                    </Field>
-                  </FormGrid>
-                  <div className="flex flex-wrap gap-2">
-                    <Button type="submit" disabled={mutation.isPending}>
-                      Buat claim
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={() => setFormMode("none")}
-                    >
-                      Batal
-                    </Button>
-                  </div>
-                </form>
-              </Card>
-            ) : null}
-
-            <div className="grid gap-4 xl:grid-cols-2">
-              <Card title={`Sales returns (${salesReturnsPage.total})`}>
-                {salesReturnsPage.total === 0 ? (
-                  <EmptyState
-                    compact
-                    icon={RotateCcw}
-                    title="Belum ada sales return"
-                    message="Buat return dari pelanggan."
-                    action={
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={() => setFormMode("sr")}
-                      >
-                        Sales return
-                      </Button>
-                    }
-                  />
-                ) : (
-                  <>
-                    <Table
-                      headers={[
-                        "Nomor",
-                        "Total",
-                        "Status",
-                        "Alasan",
-                        "Aksi",
-                      ]}
-                    >
-                      {salesReturnsPage.items.map((r) => (
-                        <tr key={r.id}>
-                          <td className="px-3 py-2 font-medium text-[#0F4C75]">
-                            {r.number}
-                          </td>
-                          <td className="px-3 py-2 font-semibold tabular-nums text-[#0F4C75]">
-                            {formatIdr(r.total)}
-                          </td>
-                          <td className="px-3 py-2">
-                            <Badge tone={retTone(r.status)}>{r.status}</Badge>
-                          </td>
-                          <td className="max-w-[8rem] truncate px-3 py-2 text-xs">
-                            {r.reason || "—"}
-                          </td>
-                          <td className="px-3 py-2">
-                            {r.status !== "POSTED" ? (
-                              <Button
-                                type="button"
-                                variant="secondary"
-                                onClick={() =>
-                                  mutation.mutate({
-                                    action: "post_sales_return",
-                                    id: r.id,
-                                    warehouseId: data.warehouses[0]?.id,
-                                  })
-                                }
-                              >
-                                Post
-                              </Button>
-                            ) : (
-                              <span className="text-xs text-muted">—</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </Table>
-                    <PaginationBar
-                      page={salesReturnsPage.page}
-                      totalPages={salesReturnsPage.totalPages}
-                      total={salesReturnsPage.total}
-                      limit={salesReturnsPage.limit}
-                      onPageChange={salesReturnsPage.setPage}
-                    />
-                  </>
-                )}
-              </Card>
-
-              <Card title={`Purchase returns (${purchaseReturnsPage.total})`}>
-                {purchaseReturnsPage.total === 0 ? (
-                  <EmptyState
-                    compact
-                    icon={PackageMinus}
-                    title="Belum ada purchase return"
-                    message="Buat return ke pemasok."
-                    action={
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={() => setFormMode("pr")}
-                      >
-                        PR return
-                      </Button>
-                    }
-                  />
-                ) : (
-                  <>
-                    <Table headers={["Nomor", "Total", "Status", "Aksi"]}>
-                      {purchaseReturnsPage.items.map((r) => (
-                        <tr key={r.id}>
-                          <td className="px-3 py-2 font-medium text-[#0F4C75]">
-                            {r.number}
-                          </td>
-                          <td className="px-3 py-2 font-semibold tabular-nums text-[#0F4C75]">
-                            {formatIdr(r.total)}
-                          </td>
-                          <td className="px-3 py-2">
-                            <Badge tone={retTone(r.status)}>{r.status}</Badge>
-                          </td>
-                          <td className="px-3 py-2">
-                            {r.status !== "POSTED" ? (
-                              <Button
-                                type="button"
-                                variant="secondary"
-                                onClick={() =>
-                                  mutation.mutate({
-                                    action: "post_purchase_return",
-                                    id: r.id,
-                                    warehouseId: data.warehouses[0]?.id,
-                                  })
-                                }
-                              >
-                                Post
-                              </Button>
-                            ) : (
-                              <span className="text-xs text-muted">—</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </Table>
-                    <PaginationBar
-                      page={purchaseReturnsPage.page}
-                      totalPages={purchaseReturnsPage.totalPages}
-                      total={purchaseReturnsPage.total}
-                      limit={purchaseReturnsPage.limit}
-                      onPageChange={purchaseReturnsPage.setPage}
-                    />
-                  </>
-                )}
-              </Card>
-            </div>
-
-            <Card title="Credit / Debit note (accounting)">
-              <div className="mb-3 flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={cnMutation.isPending}
-                  onClick={() => {
-                    const id = cnQuery.data?.salesReturns[0]?.id;
-                    if (!id) return;
-                    cnMutation.mutate({
-                      action: "from_sales_return",
-                      salesReturnId: id,
-                    });
-                  }}
-                >
-                  CN dari sales return terbaru
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={cnMutation.isPending}
-                  onClick={() => {
-                    const id = cnQuery.data?.purchaseReturns[0]?.id;
-                    if (!id) return;
-                    cnMutation.mutate({
-                      action: "from_purchase_return",
-                      purchaseReturnId: id,
-                    });
-                  }}
-                >
-                  DN dari purchase return terbaru
-                </Button>
-              </div>
-              <MutationError error={cnMutation.error} />
-              {notesPage.total === 0 ? (
-                <EmptyState
-                  compact
-                  icon={FileText}
-                  title="Belum ada credit/debit note"
-                  message="Generate CN/DN dari return yang sudah ada."
-                />
-              ) : (
-                <>
-                  <Table headers={["Tipe", "Nomor", "Total", "Status"]}>
-                    {notesPage.items.map((n) => (
-                      <tr key={n.id}>
-                        <td className="px-3 py-2">{n.noteType}</td>
-                        <td className="px-3 py-2 font-medium text-[#0F4C75]">
-                          {n.number}
-                        </td>
-                        <td className="px-3 py-2 font-semibold tabular-nums text-[#0F4C75]">
-                          {formatIdr(n.total)}
-                        </td>
-                        <td className="px-3 py-2">
-                          <Badge tone={retTone(n.status)}>{n.status}</Badge>
-                        </td>
-                      </tr>
-                    ))}
-                  </Table>
-                  <PaginationBar
-                    page={notesPage.page}
-                    totalPages={notesPage.totalPages}
-                    total={notesPage.total}
-                    limit={notesPage.limit}
-                    onPageChange={notesPage.setPage}
-                  />
-                </>
-              )}
-            </Card>
-
-            <Card title={`Claims (${claimsPage.total})`}>
-              {claimsPage.total === 0 ? (
-                <EmptyState
-                  compact
-                  icon={ShieldAlert}
-                  title="Belum ada claim"
-                  message="Catat claim customer/supplier/warranty."
-                  action={
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={() => setFormMode("claim")}
-                    >
-                      Claim
-                    </Button>
-                  }
-                />
-              ) : (
-                <>
-                  <Table
-                    headers={[
-                      "Nomor",
-                      "Tipe",
-                      "Partner",
-                      "Jumlah",
-                      "Status",
-                    ]}
-                  >
-                    {claimsPage.items.map((c) => (
-                      <tr key={c.id}>
-                        <td className="px-3 py-2 font-medium text-[#0F4C75]">
-                          {c.number}
-                        </td>
-                        <td className="px-3 py-2">{c.claimType}</td>
-                        <td className="px-3 py-2">{c.partnerName || "—"}</td>
-                        <td className="px-3 py-2 font-semibold tabular-nums text-[#0F4C75]">
-                          {formatIdr(c.amount)}
-                        </td>
-                        <td className="px-3 py-2">
-                          <Badge tone={retTone(c.status)}>{c.status}</Badge>
-                        </td>
-                      </tr>
-                    ))}
-                  </Table>
-                  <PaginationBar
-                    page={claimsPage.page}
-                    totalPages={claimsPage.totalPages}
-                    total={claimsPage.total}
-                    limit={claimsPage.limit}
-                    onPageChange={claimsPage.setPage}
-                  />
-                </>
-              )}
-            </Card>
-          </>
-        ) : null}
-      </QueryBoundary>
-    </ListPageShell>
-  );
+  return <ListPageShell>
+    <PageHeader title="Return & Claim" description="Retur karantina, release stok, scrap, refund approved, DO pengganti, SLA claim." />
+    <QueryBoundary isLoading={query.isLoading} isError={query.isError} error={query.error} onRetry={() => void query.refetch()}>
+      <MutationError error={mutation.error} />
+      <MutationError error={noteMutation.error} />
+      {data && <>
+        <Card title="Buat return dari sumber">
+          <form className="grid gap-3 sm:grid-cols-2" onSubmit={e => {
+            e.preventDefault();
+            if (!source || !item) return;
+            const body = formToObject(e.currentTarget);
+            const key = requestKey || crypto.randomUUID();
+            setRequestKey(key);
+            mutation.mutate({ action: kind === "sales" ? "sales_return" : "purchase_return", warehouseId: kind === "sales" ? body.warehouseId : source.warehouseId, ...(kind === "sales" ? { salesInvoiceId: source.id, customerId: "customerId" in source ? source.customerId : "" } : { supplierId: "supplierId" in source ? source.supplierId : "" }), idempotencyKey: key, reason: body.reason, items: [{ productId: item.productId, quantity: body.quantity, ...(kind === "sales" ? { sourceItemId: item.id } : { sourceReceiptItemId: item.id }) }] }, { onSuccess: () => { setSourceId(""); setSourceItemId(""); setRequestKey(""); } });
+          }}>
+            <Field label="Tipe"><Select value={kind} onChange={e => { setKind(e.target.value); setSourceId(""); setSourceItemId(""); setRequestKey(""); }}><option value="sales">Sales return</option><option value="purchase">Purchase return</option></Select></Field>
+            <Field label="Invoice / receipt posted"><Select required value={sourceId} onChange={e => { setSourceId(e.target.value); setSourceItemId(""); setRequestKey(""); }}><option value="">Pilih sumber</option>{(kind === "sales" ? data.salesInvoices : data.goodsReceipts).map(s => <option key={s.id} value={s.id}>{s.number}</option>)}</Select></Field>
+            <Field label="Item sumber"><Select required value={sourceItemId} onChange={e => { setSourceItemId(e.target.value); setRequestKey(""); }}><option value="">Pilih item</option>{source?.items.map(i => <option key={i.id} value={i.id}>{i.description || i.productId} · sumber {i.quantity} · return {i.returned}</option>)}</Select></Field>
+            {kind === "sales" && <Field label="Gudang karantina"><Select required name="warehouseId"><option value="">Pilih karantina</option>{data.warehouses.filter(w => ["RETURN", "DAMAGED"].includes(w.type)).map(w => <option key={w.id} value={w.id}>{w.code}</option>)}</Select></Field>}
+            <Field label="Qty"><Input required min="0.0001" step="0.0001" type="number" name="quantity" onChange={() => setRequestKey("")} /></Field>
+            <Field label="Alasan"><Input name="reason" onChange={() => setRequestKey("")} /></Field>
+            <Button type="submit" disabled={mutation.isPending || !item}>Buat draft · biaya/pajak dari sumber</Button>
+          </form>
+        </Card>
+        {(["sales", "purchase"] as const).map(k => <Card key={k} title={k === "sales" ? "Sales returns · karantina" : "Purchase returns"}>
+          <Table headers={["Nomor", "Total", "Status", "Inspeksi / aksi"]}>
+            {(k === "sales" ? data.salesReturns : data.purchaseReturns).map(r => <tr key={r.id}>
+              <td className="p-3">{r.number}</td><td className="p-3">{formatIdr(r.total)}</td><td className="p-3"><Badge>{r.status}</Badge>{r.disposition && <span> {r.disposition}</span>}</td>
+              <td className="p-3">
+                {r.status === "DRAFT" && <div className="flex gap-2"><Input aria-label={`Catatan inspeksi ${r.number}`} placeholder="Catatan inspeksi wajib" value={inspection[r.id] || ""} onChange={e => setInspection({ ...inspection, [r.id]: e.target.value })} /><Button disabled={mutation.isPending || !inspection[r.id]?.trim()} onClick={() => mutation.mutate({ action: `approve_${k}_return`, id: r.id, warehouseId: r.warehouseId, inspectionNotes: inspection[r.id], disposition: "QUARANTINE" })}>Approve</Button></div>}
+                {r.status === "APPROVED" && <Button disabled={mutation.isPending} onClick={() => mutation.mutate({ action: `post_${k}_return`, id: r.id, warehouseId: r.warehouseId })}>{k === "sales" ? "Terima karantina" : "Kirim ke pemasok"}</Button>}
+                {k === "sales" && r.status === "POSTED" && <form className="grid gap-2" onSubmit={e => { e.preventDefault(); const body = formToObject(e.currentTarget); mutation.mutate({ ...body, id: r.id }); }}>
+                  <Select aria-label="Aksi lanjutan" name="action"><option value="release">Release to stock</option><option value="dispose">Scrap</option><option value="approve_settlement">Approve settlement refund</option><option value="refund">Bayar refund</option><option value="replacement" disabled>Replacement belum tersedia — gunakan credit note/refund</option></Select>
+                  <Select aria-label="Gudang utama tujuan" name="targetWarehouseId"><option value="">Gudang utama tujuan</option>{data.warehouses.filter(w => w.type === "MAIN").map(w => <option key={w.id} value={w.id}>{w.code}</option>)}</Select>
+                  <Input aria-label="Catatan inspeksi release" name="inspectionNotes" placeholder="Catatan inspeksi release" />
+                  <Input aria-label="Jumlah settlement atau refund" name="amount" type="number" min="0.01" step="0.01" placeholder="Jumlah settlement / refund" />
+                  <Input aria-label="Bank account ID refund" name="bankAccountId" placeholder="Bank account ID refund" />
+                  <span>Settlement: {r.settlementStatus} {r.refundAmount && formatIdr(r.refundAmount)} {r.refundedAt && "· sudah refund"} {r.replacementDeliveryId && `· DO ${r.replacementDeliveryId}`}</span>
+                  <Button disabled={mutation.isPending} type="submit">Jalankan aksi approved</Button>
+                </form>}
+                {r.status === "POSTED" && <Button disabled={noteMutation.isPending} onClick={() => noteMutation.mutate(k === "sales" ? { action: "from_sales_return", salesReturnId: r.id } : { action: "from_purchase_return", purchaseReturnId: r.id })}>{k === "sales" ? "CN" : "DN"} dari {r.number}</Button>}
+              </td>
+            </tr>)}
+          </Table>
+        </Card>)}
+        <Card title="Credit / debit notes · financial only"><Table headers={["Tipe", "Nomor", "Total", "Status"]}>{[...(notes.data?.creditNotes || []).map(n => ({ ...n, kind: "CN" })), ...(notes.data?.debitNotes || []).map(n => ({ ...n, kind: "DN" }))].map(n => <tr key={n.id}><td className="p-3">{n.kind}</td><td className="p-3">{n.number}</td><td className="p-3">{formatIdr(n.total)}</td><td className="p-3">{n.status}</td></tr>)}</Table></Card>
+        <Card title="Claim"><form className="flex gap-3" onSubmit={e => { e.preventDefault(); mutation.mutate({ action: "claim", ...formToObject(e.currentTarget) }); }}><Select name="claimType"><option value="CUSTOMER">Customer</option><option value="SUPPLIER">Supplier</option><option value="WARRANTY">Warranty</option></Select><Input aria-label="Partner" name="partnerName" placeholder="Partner" /><Input aria-label="Jumlah" required name="amount" type="number" min="0.01" step="0.01" /><Input aria-label="Owner user ID" name="ownerId" required placeholder="Owner user ID" /><Input aria-label="SLA due" name="dueAt" type="date" required /><Input aria-label="Evidence FileAsset ID" name="evidenceFileId" placeholder="Evidence FileAsset ID" /><Button disabled={mutation.isPending} type="submit">Buat claim</Button></form><Table headers={["Nomor", "Partner", "Jumlah", "Status"]}>{data.claims.map(c => <tr key={c.id}><td className="p-3">{c.number}</td><td className="p-3">{c.partnerName}</td><td className="p-3">{formatIdr(c.amount)}</td><td className="p-3">{c.status} · {c.ownerId} · {c.dueAt?.slice(0, 10)} {c.evidenceFileId && `· evidence ${c.evidenceFileId}`}{c.status === "DRAFT" && <Button disabled={mutation.isPending} onClick={() => mutation.mutate({ action: "advance_claim", id: c.id, claimStatus: "IN_PROGRESS" })}>Mulai</Button>}{c.status === "IN_PROGRESS" && <form onSubmit={e => { e.preventDefault(); mutation.mutate({ action: "advance_claim", id: c.id, claimStatus: "RESOLVED", ...formToObject(e.currentTarget) }); }}><Input aria-label="Resolution" required name="resolution" placeholder="Resolution untuk approval" /><Button disabled={mutation.isPending} type="submit">Approve resolution</Button></form>}</td></tr>)}</Table></Card>
+      </>}
+    </QueryBoundary>
+  </ListPageShell>;
 }

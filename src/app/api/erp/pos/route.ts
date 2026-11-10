@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
@@ -11,10 +11,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("invoice:view");
     const [sessions, products, warehouses] = await Promise.all([
       prisma.posSession.findMany({
-        where: { companyId: ctx.companyId },
+        where: { ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}), ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId },
         include: { orders: { include: { items: true }, take: 20 } },
         orderBy: { openedAt: "desc" },
         take: 10,
@@ -24,7 +24,7 @@ export async function GET() {
         take: 100,
       }),
       prisma.warehouse.findMany({
-        where: { companyId: ctx.companyId, isActive: true },
+        where: { ...(ctx.warehouseIds.length ? { id: { in: ctx.warehouseIds } } : {}), ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId, isActive: true },
       }),
     ]);
 
@@ -75,6 +75,7 @@ export async function POST(req: Request) {
 
     if (body.action === "close") {
       const ctx = await requirePermission("invoice:create");
+    await assertRequestAccess(ctx, body);
       const session = await closePosSession(
         ctx.companyId,
         String(body.sessionId ?? ""),
@@ -85,6 +86,7 @@ export async function POST(req: Request) {
 
     if (body.action === "order") {
       const ctx = await requirePermission("invoice:create");
+    await assertRequestAccess(ctx, body);
       const order = await createPosOrder({
         companyId: ctx.companyId,
         userId: ctx.user.id,
@@ -104,6 +106,7 @@ export async function POST(req: Request) {
     }
 
     const ctx = await requirePermission("invoice:create");
+    await assertRequestAccess(ctx, body);
     const session = await openPosSession({
       companyId: ctx.companyId,
       warehouseId: body.warehouseId,

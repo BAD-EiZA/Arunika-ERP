@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import { createTaxCode } from "@/server/services/tax";
@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("tax:view");
     const [codes, registration] = await Promise.all([
       prisma.taxCode.findMany({
         where: { companyId: ctx.companyId },
@@ -59,6 +59,7 @@ export async function POST(req: Request) {
       pkpDate?: string;
       taxOffice?: string;
     };
+    await assertRequestAccess(ctx, body);
 
     if (body.action === "registration") {
       const { upsertTaxRegistration } = await import("@/server/services/tax");

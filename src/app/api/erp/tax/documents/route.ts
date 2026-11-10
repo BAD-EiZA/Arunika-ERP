@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("tax:view");
     const docs = await prisma.taxDocument.findMany({
       where: { companyId: ctx.companyId },
       orderBy: { createdAt: "desc" },
@@ -52,15 +52,18 @@ export async function POST(req: Request) {
 
     if (body.action === "export") {
       const ctx = await requirePermission("tax_export:generate");
+    await assertRequestAccess(ctx, body);
       return exportTaxPeriod(ctx.companyId, String(body.taxPeriod ?? ""));
     }
     if (body.action === "efaktur") {
       const ctx = await requirePermission("tax_export:generate");
+    await assertRequestAccess(ctx, body);
       return exportEfakturCsv(ctx.companyId, String(body.taxPeriod ?? ""));
     }
 
     if (body.action === "correct") {
       const ctx = await requirePermission("tax_document:correct");
+    await assertRequestAccess(ctx, body);
       const doc = await correctTaxDocument({
         companyId: ctx.companyId,
         taxDocumentId: String(body.id ?? ""),
@@ -72,6 +75,7 @@ export async function POST(req: Request) {
     }
 
     const ctx = await requirePermission("tax_document:create");
+    await assertRequestAccess(ctx, body);
     const doc = await createTaxDocument({
       companyId: ctx.companyId,
       docType: body.docType || "FAKTUR_KELUARAN",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Badge,
   Button,
@@ -118,17 +118,12 @@ export function SupplierBillsClient() {
   const query = useSupplierBillsQuery();
   const mutation = useCreateSupplierBillMutation();
   const data = query.data;
-  const [lines, setLines] = useState<LineItemDraft[]>([]);
+  const [draftLines, setLines] = useState<LineItemDraft[]>([]);
+  const lines = draftLines.length ? draftLines : data?.products?.length ? productLines(data.products) : [];
   const [showCreate, setShowCreate] = useState(false);
   const [filter, setFilter] = useState<BillFilter>("ALL");
 
   const bills = data?.bills ?? [];
-
-  useEffect(() => {
-    if (data?.products?.length && lines.length === 0) {
-      setLines(productLines(data.products));
-    }
-  }, [data?.products, lines.length]);
 
   const stats = useMemo(() => {
     let openCount = 0;

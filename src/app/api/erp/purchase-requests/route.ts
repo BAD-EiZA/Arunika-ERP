@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import {
@@ -10,10 +10,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("purchase_request:view");
     const [requests, products, branches] = await Promise.all([
       prisma.purchaseRequest.findMany({
-        where: { companyId: ctx.companyId },
+        where: { ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId },
         include: { items: { include: { product: true } } },
         orderBy: { createdAt: "desc" },
       }),
@@ -21,7 +21,7 @@ export async function GET() {
         where: { companyId: ctx.companyId, isArchived: false },
       }),
       prisma.branch.findMany({
-        where: { companyId: ctx.companyId, isActive: true },
+        where: { ...(ctx.branchIds.length ? { id: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId, isActive: true },
       }),
     ]);
     return {
@@ -57,6 +57,7 @@ export async function POST(req: Request) {
     };
     if (body.action === "approve") {
       const ctx = await requirePermission("purchase_request:approve");
+    await assertRequestAccess(ctx, body);
       const pr = await approvePurchaseRequest(
         ctx.companyId,
         ctx.user.id,
@@ -65,6 +66,7 @@ export async function POST(req: Request) {
       return { purchaseRequest: { id: pr.id, status: pr.status } };
     }
     const ctx = await requirePermission("purchase_request:create");
+    await assertRequestAccess(ctx, body);
     const pr = await createPurchaseRequest({
       companyId: ctx.companyId,
       userId: ctx.user.id,

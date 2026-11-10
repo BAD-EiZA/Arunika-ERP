@@ -1,195 +1,124 @@
-import {
-  closeFiscalPeriod,
-  createBankAccount,
-  createBudget,
-  createFixedAsset,
-  importBankStatement,
-  reconcileStatementLine,
-  runStraightLineDepreciation,
-} from "@/server/services/treasury";
-
-const prismaMock = {
-  bankAccount: {
-    create: jest.fn(),
-    findFirst: jest.fn(),
-  },
+import { closeFiscalYear, importBankStatement, reconcileStatementLine, runStraightLineDepreciation, disposeFixedAsset } from "../treasury";
+const mockDb = {
+  bankAccount: { findFirst: jest.fn() },
   bankStatement: { create: jest.fn() },
-  bankStatementLine: {
-    findFirst: jest.fn(),
-    update: jest.fn(),
-  },
-  budget: { create: jest.fn() },
-  fixedAsset: {
-    create: jest.fn(),
-    findFirst: jest.fn(),
-    update: jest.fn(),
-  },
-  fiscalPeriod: {
-    findFirst: jest.fn(),
-    update: jest.fn(),
-  },
+  bankStatementLine: { findFirst: jest.fn(), update: jest.fn() },
+  fixedAsset: { findFirst: jest.fn(), update: jest.fn() },
+  fiscalPeriod: { findFirst: jest.fn(), updateMany: jest.fn() },
+  fiscalYear: { findFirst: jest.fn(), update: jest.fn() },
+  journalLine: { findMany: jest.fn() },
+  account: { findMany: jest.fn() },
+  journal: { findUnique: jest.fn(), create: jest.fn() },
+  $transaction: jest.fn(),
 };
-
-jest.mock("@/lib/db", () => ({
-  prisma: {
-    bankAccount: {
-      create: (...a: unknown[]) => prismaMock.bankAccount.create(...a),
-      findFirst: (...a: unknown[]) => prismaMock.bankAccount.findFirst(...a),
-    },
-    bankStatement: {
-      create: (...a: unknown[]) => prismaMock.bankStatement.create(...a),
-    },
-    bankStatementLine: {
-      findFirst: (...a: unknown[]) => prismaMock.bankStatementLine.findFirst(...a),
-      update: (...a: unknown[]) => prismaMock.bankStatementLine.update(...a),
-    },
-    budget: { create: (...a: unknown[]) => prismaMock.budget.create(...a) },
-    fixedAsset: {
-      create: (...a: unknown[]) => prismaMock.fixedAsset.create(...a),
-      findFirst: (...a: unknown[]) => prismaMock.fixedAsset.findFirst(...a),
-      update: (...a: unknown[]) => prismaMock.fixedAsset.update(...a),
-    },
-    fiscalPeriod: {
-      findFirst: (...a: unknown[]) => prismaMock.fiscalPeriod.findFirst(...a),
-      update: (...a: unknown[]) => prismaMock.fiscalPeriod.update(...a),
-    },
-  },
-}));
-
-describe("treasury", () => {
-  beforeEach(() => jest.clearAllMocks());
-
-  it("createBankAccount", async () => {
-    await expect(
-      createBankAccount({ companyId: "c", code: " ", name: "n" }),
-    ).rejects.toThrow("Kode dan nama rekening wajib");
-    await expect(
-      createBankAccount({ companyId: "c", code: "B", name: " " }),
-    ).rejects.toThrow("Kode dan nama rekening wajib");
-    prismaMock.bankAccount.create.mockResolvedValue({ id: "ba" });
-    await createBankAccount({
-      companyId: "c",
-      code: " B1 ",
-      name: " Bank ",
-      bankName: "BCA",
-      accountNumber: "123",
-    });
-    expect(prismaMock.bankAccount.create).toHaveBeenCalled();
+jest.mock("@/lib/db", () => ({ prisma: new Proxy({}, { get: (_t, k) => mockDb[k as keyof typeof mockDb] }) }));
+jest.mock("@/lib/document-number", () => ({ nextDocumentNumber: jest.fn(async () => "JE/1") }));
+const date = new Date("2026-01-31");
+const asset = { id: "a", code: "A", name: "Asset", acquisitionDate: new Date("2025-01-01"), acquisitionCost: "1200", residualValue: "0", usefulLifeMonths: 12, accumulatedDep: "0", bookValue: "1200" };
+beforeEach(() => {
+  jest.resetAllMocks();
+  mockDb.$transaction.mockImplementation(async fn => fn(mockDb));
+  mockDb.account.findMany.mockResolvedValue(["6200", "1210", "4100", "3200", "1110", "1200", "6100"].map(code => ({ id: code, code, isActive: true })));
+  mockDb.fiscalPeriod.findFirst.mockResolvedValue({ id: "p", status: "OPEN", startDate: new Date("2026-01-01"), endDate: date, fiscalYear: { isClosed: false } });
+  mockDb.fixedAsset.findFirst.mockResolvedValue(asset);
+  mockDb.journal.findUnique.mockResolvedValue(null);
+  mockDb.journal.create.mockResolvedValue({ id: "j" });
+  mockDb.fixedAsset.update.mockResolvedValue({ id: "a" });
+  mockDb.fiscalYear.findFirst.mockResolvedValue({ id: "y", name: "2026", startDate: new Date("2026-01-01"), endDate: date, isClosed: false, periods: [{ id: "p", status: "OPEN" }] });
+  mockDb.journalLine.findMany.mockResolvedValue([{ accountId: "4100", account: { code: "4100", type: "REVENUE" }, debit: "0", credit: "500" }]);
+});
+describe("depreciation", () => {
+  it("rejects missing asset", async () => {
+    mockDb.fixedAsset.findFirst.mockResolvedValue(null);
+    await expect(runStraightLineDepreciation("c", "a", "u", date)).rejects.toThrow("Aset tidak ditemukan");
   });
-
-  it("importBankStatement", async () => {
-    prismaMock.bankAccount.findFirst.mockResolvedValue(null);
-    await expect(
-      importBankStatement({
-        companyId: "c",
-        bankAccountId: "x",
-        statementDate: new Date(),
-        openingBalance: 0,
-        closingBalance: 0,
-        lines: [],
-      }),
-    ).rejects.toThrow("Rekening tidak ditemukan");
-
-    prismaMock.bankAccount.findFirst.mockResolvedValue({ id: "ba" });
-    prismaMock.bankStatement.create.mockResolvedValue({ id: "st" });
-    await importBankStatement({
-      companyId: "c",
-      bankAccountId: "ba",
-      statementDate: new Date(),
-      openingBalance: 10,
-      closingBalance: 20,
-      lines: [{ lineDate: new Date(), description: "d", amount: 5 }],
-    });
-    expect(prismaMock.bankStatement.create).toHaveBeenCalled();
+  it("posts period-stable journal before asset mutation", async () => {
+    await runStraightLineDepreciation("c", "a", "u", date);
+    expect(mockDb.journal.create.mock.calls[0][0].data.idempotencyKey).toBe("dep:a:p");
+    expect(mockDb.fixedAsset.update.mock.calls[0][0].data.accumulatedDep).toBe("100.00");
+    expect(mockDb.journal.create.mock.invocationCallOrder[0]).toBeLessThan(mockDb.fixedAsset.update.mock.invocationCallOrder[0]);
+    expect(mockDb.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "Serializable" });
   });
-
-  it("reconcileStatementLine", async () => {
-    prismaMock.bankStatementLine.findFirst.mockResolvedValue(null);
-    await expect(reconcileStatementLine("c", "l", "ref")).rejects.toThrow(
-      "Baris statement tidak ditemukan",
-    );
-    prismaMock.bankStatementLine.findFirst.mockResolvedValue({ id: "l" });
-    prismaMock.bankStatementLine.update.mockResolvedValue({ id: "l" });
-    await reconcileStatementLine("c", "l", "REF");
-    expect(prismaMock.bankStatementLine.update).toHaveBeenCalledWith({
-      where: { id: "l" },
-      data: { isReconciled: true, matchedRef: "REF" },
-    });
+  it("rejects duplicate period without updating asset", async () => {
+    mockDb.journal.findUnique.mockResolvedValue({ id: "duplicate" });
+    await expect(runStraightLineDepreciation("c", "a", "u", date)).rejects.toThrow("sudah disusutkan");
+    expect(mockDb.fixedAsset.update).not.toHaveBeenCalled();
   });
-
-  it("createBudget and createFixedAsset", async () => {
-    prismaMock.budget.create.mockResolvedValue({ id: "b" });
-    await createBudget({
-      companyId: "c",
-      name: "B",
-      year: 2026,
-      lines: [{ accountCode: "6100", period: 1, amount: 100 }],
-    });
-    expect(prismaMock.budget.create).toHaveBeenCalled();
-
-    prismaMock.fixedAsset.create.mockResolvedValue({ id: "a" });
-    await createFixedAsset({
-      companyId: "c",
-      code: "A1",
-      name: "Laptop",
-      acquisitionDate: new Date(),
-      acquisitionCost: 1200,
-      residualValue: 0,
-      usefulLifeMonths: 12,
-      category: "IT",
-    });
-    await createFixedAsset({
-      companyId: "c",
-      code: "A2",
-      name: "Desk",
-      acquisitionDate: new Date(),
-      acquisitionCost: 100,
-      usefulLifeMonths: 10,
-    });
-    expect(prismaMock.fixedAsset.create).toHaveBeenCalledTimes(2);
+  it("journal failure prevents mutation", async () => {
+    mockDb.journal.create.mockRejectedValue(new Error("post fail"));
+    await expect(runStraightLineDepreciation("c", "a", "u", date)).rejects.toThrow("post fail");
+    expect(mockDb.fixedAsset.update).not.toHaveBeenCalled();
   });
-
-  it("runStraightLineDepreciation", async () => {
-    prismaMock.fixedAsset.findFirst.mockResolvedValue(null);
-    await expect(runStraightLineDepreciation("c", "a")).rejects.toThrow(
-      "Aset tidak ditemukan",
-    );
-
-    const asset = {
-      id: "a",
-      acquisitionCost: "1200",
-      residualValue: "0",
-      usefulLifeMonths: 12,
-      accumulatedDep: "0",
-    };
-    prismaMock.fixedAsset.findFirst.mockResolvedValue(asset);
-    prismaMock.fixedAsset.update.mockResolvedValue({ id: "a" });
-    await runStraightLineDepreciation("c", "a");
-    expect(prismaMock.fixedAsset.update).toHaveBeenCalled();
-
-    // residual floor hit
-    prismaMock.fixedAsset.findFirst.mockResolvedValue({
-      id: "a",
-      acquisitionCost: "100",
-      residualValue: "90",
-      usefulLifeMonths: 12,
-      accumulatedDep: "20",
-    });
-    const r = await runStraightLineDepreciation("c", "a");
-    expect(r.accumulatedDep).toBe("20");
+  it("caps final depreciation at residual", async () => {
+    mockDb.fixedAsset.findFirst.mockResolvedValue({ ...asset, accumulatedDep: "1199.99", bookValue: "0.01" });
+    await runStraightLineDepreciation("c", "a", "u", date);
+    expect(mockDb.fixedAsset.update.mock.calls[0][0].data.bookValue).toBe("0.00");
   });
-
-  it("closeFiscalPeriod", async () => {
-    prismaMock.fiscalPeriod.findFirst.mockResolvedValue(null);
-    await expect(closeFiscalPeriod("c", "p")).rejects.toThrow(
-      "Periode tidak ditemukan",
-    );
-    prismaMock.fiscalPeriod.findFirst.mockResolvedValue({ id: "p" });
-    prismaMock.fiscalPeriod.update.mockResolvedValue({ id: "p", status: "CLOSED" });
-    await closeFiscalPeriod("c", "p");
-    expect(prismaMock.fiscalPeriod.update).toHaveBeenCalledWith({
-      where: { id: "p" },
-      data: { status: "CLOSED" },
-    });
+  it("rejects missing period", async () => {
+    mockDb.fiscalPeriod.findFirst.mockResolvedValue(null);
+    await expect(runStraightLineDepreciation("c", "a", "u", date)).rejects.toThrow("Periode");
+  });
+});
+describe("disposal", () => {
+  it("journal failure prevents asset disposal", async () => {
+    mockDb.journal.create.mockRejectedValue(new Error("post fail"));
+    await expect(disposeFixedAsset({ companyId: "c", userId: "u", assetId: "a" })).rejects.toThrow("post fail");
+    expect(mockDb.fixedAsset.update).not.toHaveBeenCalled();
+  });
+});
+describe("fiscal closing", () => {
+  const close = () => closeFiscalYear({ companyId: "c", userId: "u", fiscalYearId: "y" });
+  it("posts before closing periods in single serializable transaction", async () => {
+    await close();
+    expect(mockDb.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockDb.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "Serializable" });
+    expect(mockDb.journal.create.mock.invocationCallOrder[0]).toBeLessThan(mockDb.fiscalPeriod.updateMany.mock.invocationCallOrder[0]);
+    expect(mockDb.fiscalYear.update).toHaveBeenCalledWith({ where: { id: "y" }, data: { isClosed: true } });
+  });
+  it("posting failure leaves periods and year unchanged", async () => {
+    mockDb.journal.create.mockRejectedValue(new Error("post fail"));
+    await expect(close()).rejects.toThrow("post fail");
+    expect(mockDb.fiscalPeriod.updateMany).not.toHaveBeenCalled();
+    expect(mockDb.fiscalYear.update).not.toHaveBeenCalled();
+  });
+  it("closes empty year without creating empty journal", async () => {
+    mockDb.journalLine.findMany.mockResolvedValue([]);
+    await close();
+    expect(mockDb.journal.create).not.toHaveBeenCalled();
+    expect(mockDb.fiscalPeriod.updateMany).toHaveBeenCalled();
+  });
+  it("normalizes contra income balance without negative lines", async () => {
+    mockDb.journalLine.findMany.mockResolvedValue([{ accountId: "4100", account: { code: "4100", type: "REVENUE" }, debit: "500", credit: "0" }]);
+    await close();
+    expect(mockDb.journal.create.mock.calls[0][0].data.lines.create[0].credit).toBe("500.00");
+  });
+});
+describe("bank reconciliation", () => {
+  beforeEach(() => {
+    mockDb.bankAccount.findFirst.mockResolvedValue({ id: "b", glAccountId: "1110" });
+    mockDb.bankStatementLine.findFirst.mockResolvedValue(null).mockResolvedValueOnce({ id: "s", amount: "150", isReconciled: false, statement: { bankAccount: { id: "b", glAccountId: "1110" } } });
+    mockDb.journalLine.findMany.mockResolvedValue([{ id: "jl", accountId: "1110", debit: "150", credit: "0", journal: { status: "POSTED" } }]);
+  });
+  it("requires actual posted GL line ID with matching signed amount", async () => {
+    await reconcileStatementLine("c", "s", "jl");
+    expect(mockDb.bankStatementLine.update).toHaveBeenCalledWith({ where: { id: "s" }, data: { isReconciled: true, matchedRef: "jl" } });
+    expect(mockDb.journalLine.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: "jl", accountId: "1110", journal: { companyId: "c", status: "POSTED" } }) }));
+  });
+  it("rejects nonexistent reference", async () => {
+    mockDb.journalLine.findMany.mockResolvedValue([]);
+    await expect(reconcileStatementLine("c", "s", "fake")).rejects.toThrow();
+    expect(mockDb.bankStatementLine.update).not.toHaveBeenCalled();
+  });
+  it("rejects amount mismatch", async () => {
+    mockDb.journalLine.findMany.mockResolvedValue([{ id: "jl", accountId: "1110", debit: "149", credit: "0" }]);
+    await expect(reconcileStatementLine("c", "s", "jl")).rejects.toThrow("Jumlah");
+  });
+  it("rejects reused journal line", async () => {
+    mockDb.bankStatementLine.findFirst.mockResolvedValueOnce({ id: "s", amount: "150", statement: { bankAccount: { glAccountId: "1110" } } }).mockResolvedValueOnce({ id: "other" });
+    await expect(reconcileStatementLine("c", "s", "jl")).rejects.toThrow("sudah");
+  });
+  it("validates statement saldo on import", async () => {
+    await expect(importBankStatement({ companyId: "c", bankAccountId: "b", statementDate: date, openingBalance: 10, closingBalance: 20, lines: [{ lineDate: date, amount: 5 }] })).rejects.toThrow("Saldo");
+    expect(mockDb.bankStatement.create).not.toHaveBeenCalled();
   });
 });

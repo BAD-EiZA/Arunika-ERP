@@ -26,30 +26,45 @@ export async function apiGet<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+const pendingAttempts = new Map<string, { key: string; count: number }>();
+
 export async function apiPost<T>(
   url: string,
   body?: unknown,
+  idempotencyKey?: string,
 ): Promise<T> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    credentials: "same-origin",
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!res.ok) {
-    let message = res.statusText;
-    try {
-      const data = (await res.json()) as { error?: string };
-      if (data.error) message = data.error;
-    } catch {
-      // ignore
-    }
-    throw new ApiError(message || "Request gagal", res.status);
+  const payload = body === undefined ? "" : JSON.stringify(body);
+  const attempt = `${url}:${payload}`;
+  const pending = idempotencyKey ? undefined : pendingAttempts.get(attempt) ?? { key: crypto.randomUUID(), count: 0 };
+  if (pending) {
+    pending.count++;
+    pendingAttempts.set(attempt, pending);
   }
-  return res.json() as Promise<T>;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey ?? pending!.key,
+      },
+      credentials: "same-origin",
+      body: body === undefined ? undefined : payload,
+    });
+    if (!res.ok) {
+      let message = res.statusText;
+      try {
+        const data = (await res.json()) as { error?: string };
+        if (data.error) message = data.error;
+      } catch {
+        // ignore
+      }
+      throw new ApiError(message || "Request gagal", res.status);
+    }
+    return await res.json() as T;
+  } finally {
+    if (pending && --pending.count === 0) pendingAttempts.delete(attempt);
+  }
 }
 
 export function formToObject(form: HTMLFormElement | FormData) {

@@ -324,18 +324,76 @@ export async function getCashFlow(companyId: string, range?: DateRange) {
   };
 }
 
+type ReportScope = { companyId: string; branchIds: string[]; warehouseIds: string[] };
+type StockFilters = DateRange & { warehouseId?: string; productId?: string; page?: number; limit?: number };
+
+function stockScope(ctx: ReportScope, filters: StockFilters = {}) {
+  return {
+    companyId: ctx.companyId,
+    ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}),
+    warehouse: { companyId: ctx.companyId, ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}) },
+    ...(filters.warehouseId ? { AND: [{ warehouseId: filters.warehouseId }] } : {}),
+    ...(filters.productId ? { productId: filters.productId } : {}),
+  };
+}
+
+export async function getStockMovementReport(ctx: ReportScope, filters: StockFilters = {}) {
+  const page = filters.page ?? 1, limit = filters.limit ?? 20;
+  const where = { ...stockScope(ctx, filters), ...(filters.from || filters.to ? { postedAt: { ...(filters.from ? { gte: filters.from } : {}), ...(filters.to ? { lte: filters.to } : {}) } } : {}) };
+  const [data, total] = await Promise.all([
+    prisma.stockMovement.findMany({ where, include: { product: true, warehouse: true }, orderBy: [{ postedAt: "desc" }, { id: "desc" }], skip: (page - 1) * limit, take: limit }),
+    prisma.stockMovement.count({ where }),
+  ]);
+  return { rows: data.map(r => ({ id: r.id, date: r.postedAt.toISOString(), warehouse: r.warehouse.name, sku: r.product.sku, product: r.product.name, type: r.type, quantity: r.quantity.toString(), unitCost: r.unitCost.toString(), totalCost: r.totalCost.toString(), reference: r.referenceNumber ?? "" })), total, page, limit };
+}
+
+export async function getInventoryValuation(ctx: ReportScope, filters: StockFilters = {}) {
+  const data = await prisma.stockBalance.findMany({ where: stockScope(ctx, filters), include: { product: true, warehouse: true }, orderBy: [{ warehouseId: "asc" }, { productId: "asc" }] });
+  const totals = new Map<string, { warehouse: string; total: ReturnType<typeof money> }>();
+  let total = money(0);
+  const rows = data.map(r => {
+    const value = money(r.quantityOnHand).mul(money(r.averageCost));
+    total = total.plus(value);
+    const group = totals.get(r.warehouseId) ?? { warehouse: r.warehouse.name, total: money(0) };
+    group.total = group.total.plus(value); totals.set(r.warehouseId, group);
+    return { id: r.id, warehouse: r.warehouse.name, sku: r.product.sku, product: r.product.name, onHand: r.quantityOnHand.toString(), averageCost: r.averageCost.toString(), value: value.toFixed(2) };
+  });
+  return { rows, total: total.toFixed(2), warehouses: [...totals].map(([warehouseId, r]) => ({ warehouseId, warehouse: r.warehouse, total: r.total.toFixed(2) })) };
+}
+
+function orderScope(ctx: ReportScope) {
+  return { companyId: ctx.companyId, ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}), ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}) };
+}
+
+export async function getOpenOrders(ctx: ReportScope, asOf = new Date()) {
+  const where = { ...orderScope(ctx), status: { in: ["APPROVED", "SENT", "CONFIRMED", "PARTIALLY_RECEIVED", "PARTIALLY_DELIVERED"] as ("APPROVED" | "SENT" | "CONFIRMED" | "PARTIALLY_RECEIVED" | "PARTIALLY_DELIVERED")[] } };
+  const [po, so] = await Promise.all([prisma.purchaseOrder.findMany({ where, include: { items: true }, orderBy: { orderDate: "asc" } }), prisma.salesOrder.findMany({ where, include: { items: true }, orderBy: { orderDate: "asc" } })]);
+  const rows = [...po.map(r => ({ ...r, type: "PO", remaining: r.items.reduce((n, i) => n.plus(money(i.quantity).minus(money(i.quantityReceived))), money(0)) })), ...so.map(r => ({ ...r, type: "SO", remaining: r.items.reduce((n, i) => n.plus(money(i.quantity).minus(money(i.quantityDelivered))), money(0)) }))].filter(r => r.remaining.gt(0)).map(r => ({ id: r.id, type: r.type, number: r.number, status: r.status, date: r.orderDate.toISOString(), remaining: r.remaining.toFixed(4), ageDays: Math.max(0, Math.floor((asOf.getTime() - r.orderDate.getTime()) / 86400000)) }));
+  return { rows };
+}
+
+export async function getUnbilledDocuments(ctx: ReportScope) {
+  const valid = { companyId: ctx.companyId, status: { notIn: ["CANCELLED", "VOID"] as ("CANCELLED" | "VOID")[] } };
+  const branch = ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {};
+  const where = { ...stockScope(ctx), status: "POSTED" as const };
+  const [gr, delivery] = await Promise.all([
+    // ponytail: bills link to PO, not GR; report means no active bill for that PO. Add GR allocation when schema supports it.
+    prisma.goodsReceipt.findMany({ where: { ...where, purchaseOrder: { companyId: ctx.companyId, ...branch, supplierBills: { none: valid } } }, orderBy: { receiptDate: "asc" } }),
+    prisma.deliveryOrder.findMany({ where: { ...where, salesOrder: { companyId: ctx.companyId, ...branch }, salesInvoices: { none: valid } }, orderBy: { deliveryDate: "asc" } }),
+  ]);
+  return { rows: [...gr.map(r => ({ id: r.id, type: "GR", number: r.number, date: r.receiptDate.toISOString(), warehouseId: r.warehouseId })), ...delivery.map(r => ({ id: r.id, type: "DO", number: r.number, date: r.deliveryDate.toISOString(), warehouseId: r.warehouseId }))] };
+}
+
+function csvCell(v: string | number) {
+  const s = String(v ?? "");
+  // Neutralize spreadsheet formula injection (=, +, -, @, tab, CR).
+  const neutral = /^[=+\-@\t\r]/.test(s) && typeof v === "string" ? `'${s}` : s;
+  return /[",\n\r]/.test(neutral) ? `"${neutral.replaceAll('"', '""')}"` : neutral;
+}
+
 export function toCsv(
   headers: string[],
   rows: Array<Array<string | number>>,
 ): string {
-  const esc = (v: string | number) => {
-    const s = String(v ?? "");
-    if (s.includes(",") || s.includes('"') || s.includes("\n")) {
-      return `"${s.replaceAll('"', '""')}"`;
-    }
-    return s;
-  };
-  return [headers.map(esc).join(","), ...rows.map((r) => r.map(esc).join(","))].join(
-    "\n",
-  );
+  return [headers, ...rows].map((r) => r.map(csvCell).join(",")).join("\n");
 }

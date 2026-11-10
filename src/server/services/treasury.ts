@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { conflict, notFound, validationError } from "@/lib/errors";
-import { money, toPrismaMoney } from "@/lib/money";
+import { money, sumMoney, toPrismaMoney } from "@/lib/money";
 import { postJournal } from "@/server/services/accounting";
 import { newIdempotencyKey } from "@/lib/idempotency";
 
@@ -95,6 +95,15 @@ export async function importBankStatement(input: {
   if (!account) throw notFound("Rekening tidak ditemukan");
   if (!input.lines.length) throw validationError("Minimal 1 baris statement");
 
+  const lineSum = sumMoney(input.lines.map((l) => l.amount));
+  const opening = money(input.openingBalance);
+  const closing = money(input.closingBalance);
+  if (!opening.plus(lineSum).equals(closing)) {
+    throw validationError(
+      `Saldo statement tidak balance: ${opening.toFixed(2)} + ${lineSum.toFixed(2)} != ${closing.toFixed(2)}`,
+    );
+  }
+
   return prisma.bankStatement.create({
     data: {
       bankAccountId: input.bankAccountId,
@@ -118,14 +127,78 @@ export async function reconcileStatementLine(
   lineId: string,
   matchedRef: string,
 ) {
-  const line = await prisma.bankStatementLine.findFirst({
+  if (!matchedRef?.trim()) throw validationError("matchedRef wajib: id journal line yang cocok");
+  return prisma.$transaction(async (tx) => {
+  const line = await tx.bankStatementLine.findFirst({
     where: { id: lineId, statement: { bankAccount: { companyId } } },
+    include: { statement: { include: { bankAccount: true } } },
   });
   if (!line) throw notFound("Baris statement tidak ditemukan");
-  return prisma.bankStatementLine.update({
-    where: { id: lineId },
+  if (line.isReconciled) throw conflict("Baris sudah direconcile");
+
+  const glAccountId = line.statement.bankAccount.glAccountId;
+  if (!glAccountId) {
+    throw validationError("Bank account belum punya akun GL; set glAccountCode dulu");
+  }
+
+  const candidates = await tx.journalLine.findMany({
+    where: {
+      id: matchedRef,
+      accountId: glAccountId,
+      journal: { companyId, status: "POSTED" },
+    },
+  });
+  const amount = money(line.amount);
+  const match = candidates.find((c) => {
+    const signed = money(c.debit).minus(money(c.credit));
+    return signed.equals(amount);
+  });
+  if (!match) {
+    throw notFound(
+      `Jumlah jurnal line ${matchedRef} tidak ditemukan / tidak cocok`,
+    );
+  }
+
+  const used = await tx.bankStatementLine.findFirst({
+    where: { matchedRef, isReconciled: true },
+  });
+  if (used) throw conflict("Jurnal line sudah dipakai reconcile lain");
+
+  return tx.bankStatementLine.update({
+    where: { id: line.id },
     data: { isReconciled: true, matchedRef },
   });
+  }, { isolationLevel: "Serializable" });
+}
+
+export async function listReconcilableLines(companyId: string) {
+  const bankAccounts = await prisma.bankAccount.findMany({
+    where: { companyId },
+    select: { glAccountId: true },
+  });
+  const glIds = bankAccounts
+    .map((b) => b.glAccountId)
+    .filter((v): v is string => Boolean(v));
+  if (!glIds.length) return [];
+  const lines = await prisma.journalLine.findMany({
+    where: { accountId: { in: glIds }, journal: { companyId, status: "POSTED" } },
+    include: { journal: { select: { number: true } } },
+    orderBy: { id: "asc" },
+  });
+  const used = await prisma.bankStatementLine.findMany({
+    where: { matchedRef: { in: lines.map((l) => l.id) }, isReconciled: true },
+    select: { matchedRef: true },
+  });
+  const usedSet = new Set(used.map((u) => u.matchedRef));
+  return lines
+    .filter((l) => !usedSet.has(l.id))
+    .map((l) => ({
+      id: l.id,
+      accountId: l.accountId,
+      journalNumber: l.journal.number,
+      description: l.description,
+      amount: money(l.debit).minus(money(l.credit)).toString(),
+    }));
 }
 
 export async function unreconcileStatementLine(
@@ -270,49 +343,53 @@ export async function runStraightLineDepreciation(
   companyId: string,
   assetId: string,
   userId?: string,
+  postingDate: Date = new Date(),
 ) {
-  const asset = await prisma.fixedAsset.findFirst({
-    where: { id: assetId, companyId, isActive: true },
-  });
-  if (!asset) throw notFound("Aset tidak ditemukan");
-  if (asset.disposedAt) throw conflict("Aset sudah di-dispose");
-
-  const depreciable = money(asset.acquisitionCost).minus(money(asset.residualValue));
-  const monthly = depreciable.div(asset.usefulLifeMonths);
-  const nextAccum = money(asset.accumulatedDep).plus(monthly);
-  const nextBook = money(asset.acquisitionCost).minus(nextAccum);
-  if (nextBook.lt(money(asset.residualValue))) {
-    return asset;
-  }
-
-  const depAmount = monthly.toFixed(2);
-
+  if (!Number.isFinite(postingDate.getTime())) throw validationError("Tanggal tidak valid");
   return prisma.$transaction(async (tx) => {
-    const updated = await tx.fixedAsset.update({
-      where: { id: asset.id },
-      data: {
-        accumulatedDep: toPrismaMoney(nextAccum),
-        bookValue: toPrismaMoney(nextBook),
-      },
+    const asset = await tx.fixedAsset.findFirst({
+      where: { id: assetId, companyId, isActive: true },
     });
-
+    if (!asset) throw notFound("Aset tidak ditemukan");
+    if (asset.disposedAt) throw conflict("Aset sudah di-dispose");
+    const period = await tx.fiscalPeriod.findFirst({
+      where: { fiscalYear: { companyId }, startDate: { lte: postingDate }, endDate: { gte: postingDate } },
+      include: { fiscalYear: true },
+    });
+    if (!period) throw validationError("Periode akuntansi tidak ditemukan");
+    if (period.status !== "OPEN" || period.fiscalYear.isClosed) throw conflict("Periode akuntansi sudah ditutup");
+    if (postingDate < asset.acquisitionDate) throw validationError("Tanggal sebelum perolehan aset");
+    const idempotencyKey = `dep:${asset.id}:${period.id}`;
+    if (await tx.journal.findUnique({ where: { companyId_idempotencyKey: { companyId, idempotencyKey } } })) {
+      throw conflict("Aset sudah disusutkan untuk periode ini");
+    }
+    const cost = money(asset.acquisitionCost);
+    const residual = money(asset.residualValue);
+    const accum = money(asset.accumulatedDep);
+    if (!Number.isInteger(asset.usefulLifeMonths) || asset.usefulLifeMonths <= 0 || !cost.isFinite() || !residual.isFinite() || !accum.isFinite() || residual.lt(0) || residual.gt(cost) || accum.lt(0)) {
+      throw validationError("Nilai aset tidak valid");
+    }
+    const remaining = cost.minus(residual).minus(accum);
+    if (remaining.lte(0)) throw conflict("Aset sudah habis disusutkan");
+    const monthly = cost.minus(residual).div(asset.usefulLifeMonths).toDecimalPlaces(2);
+    const amount = monthly.gt(remaining) ? remaining : monthly;
+    if (amount.lte(0)) throw validationError("Nilai penyusutan harus positif");
     await postJournal(tx, {
-      companyId,
-      journalType: "DEPRECIATION",
-      sourceModule: "fixed_asset",
-      sourceDocType: "FixedAssetDep",
-      sourceDocId: `${asset.id}:${nextAccum.toFixed(2)}`,
+      companyId, journalType: "DEPRECIATION", postingDate,
+      sourceModule: "fixed_asset", sourceDocType: "FixedAssetDep",
+      sourceDocId: `${asset.id}:${period.id}`,
       description: `Penyusutan ${asset.code} ${asset.name}`,
-      idempotencyKey: `dep:${asset.id}:${nextAccum.toFixed(2)}`,
-      postedById: userId,
+      idempotencyKey, postedById: userId,
       lines: [
-        { accountCode: "6200", debit: depAmount, description: "Beban penyusutan" },
-        { accountCode: "1210", credit: depAmount, description: "Akumulasi penyusutan" },
+        { accountCode: "6200", debit: amount, description: "Beban penyusutan" },
+        { accountCode: "1210", credit: amount, description: "Akumulasi penyusutan" },
       ],
-    }).catch(() => null);
-
-    return updated;
-  });
+    });
+    return tx.fixedAsset.update({
+      where: { id: asset.id },
+      data: { accumulatedDep: toPrismaMoney(accum.plus(amount)), bookValue: toPrismaMoney(cost.minus(accum).minus(amount)) },
+    });
+  }, { isolationLevel: "Serializable" });
 }
 
 export async function disposeFixedAsset(input: {
@@ -332,16 +409,6 @@ export async function disposeFixedAsset(input: {
   const gain = proceeds.minus(book);
 
   return prisma.$transaction(async (tx) => {
-    const updated = await tx.fixedAsset.update({
-      where: { id: asset.id },
-      data: {
-        isActive: false,
-        disposedAt: new Date(),
-        disposeAmount: toPrismaMoney(proceeds),
-        bookValue: toPrismaMoney(money(0)),
-      },
-    });
-
     const lines = [
       { accountCode: "1110", debit: proceeds.toFixed(2), description: "Penerimaan dispose" },
       {
@@ -378,10 +445,18 @@ export async function disposeFixedAsset(input: {
       description: `Dispose ${asset.code}`,
       idempotencyKey: `dispose:${asset.id}`,
       postedById: input.userId,
-      lines,
-    }).catch(() => null);
+      lines: lines.filter((l) => money(l.debit ?? l.credit ?? 0).gt(0)),
+    });
 
-    return updated;
+    return tx.fixedAsset.update({
+      where: { id: asset.id },
+      data: {
+        isActive: false,
+        disposedAt: new Date(),
+        disposeAmount: toPrismaMoney(proceeds),
+        bookValue: toPrismaMoney(money(0)),
+      },
+    });
   });
 }
 
@@ -426,21 +501,13 @@ export async function closeFiscalYear(input: {
   fiscalYearId: string;
   retainedEarningsCode?: string;
 }) {
-  const year = await prisma.fiscalYear.findFirst({
+  return prisma.$transaction(async (tx) => {
+  const year = await tx.fiscalYear.findFirst({
     where: { id: input.fiscalYearId, companyId: input.companyId },
     include: { periods: true },
   });
   if (!year) throw notFound("Tahun fiskal tidak ditemukan");
   if (year.isClosed) throw conflict("Tahun fiskal sudah ditutup");
-
-  for (const p of year.periods) {
-    if (p.status === "OPEN") {
-      await prisma.fiscalPeriod.update({
-        where: { id: p.id },
-        data: { status: "CLOSED" },
-      });
-    }
-  }
 
   const reCode = input.retainedEarningsCode || "3200";
   const plTypes = [
@@ -452,7 +519,7 @@ export async function closeFiscalYear(input: {
   ] as const;
 
   // Per-account P&L balances for full close
-  const lines = await prisma.journalLine.findMany({
+  const lines = await tx.journalLine.findMany({
     where: {
       journal: {
         companyId: input.companyId,
@@ -499,7 +566,7 @@ export async function closeFiscalYear(input: {
       // close income: debit income, reduce credit balance
       closeLines.push({
         accountCode: row.code,
-        debit: row.balance.toFixed(2),
+        ...(row.balance.gt(0) ? { debit: row.balance.toFixed(2) } : { credit: row.balance.abs().toFixed(2) }),
         description: `Tutup ${row.code}`,
       });
       net = net.plus(row.balance);
@@ -507,7 +574,7 @@ export async function closeFiscalYear(input: {
       // close expense: credit expense
       closeLines.push({
         accountCode: row.code,
-        credit: row.balance.toFixed(2),
+        ...(row.balance.gt(0) ? { credit: row.balance.toFixed(2) } : { debit: row.balance.abs().toFixed(2) }),
         description: `Tutup ${row.code}`,
       });
       net = net.minus(row.balance);
@@ -529,8 +596,7 @@ export async function closeFiscalYear(input: {
       });
     }
 
-    await prisma.$transaction(async (tx) => {
-      await postJournal(tx, {
+    await postJournal(tx, {
         companyId: input.companyId,
         journalType: "YEAR_END",
         postingDate: year.endDate,
@@ -542,13 +608,17 @@ export async function closeFiscalYear(input: {
         postedById: input.userId,
         lines: closeLines,
       });
-    });
   }
 
-  return prisma.fiscalYear.update({
+  await tx.fiscalPeriod.updateMany({
+    where: { fiscalYearId: year.id, status: "OPEN" },
+    data: { status: "CLOSED" },
+  });
+  return tx.fiscalYear.update({
     where: { id: year.id },
     data: { isClosed: true },
   });
+  }, { isolationLevel: "Serializable" });
 }
 
 export async function syncBankFeed(input: {

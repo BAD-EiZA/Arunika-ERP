@@ -1,4 +1,5 @@
 import { v2 as cloudinary } from "cloudinary";
+import { timingSafeEqual } from "node:crypto";
 
 function ensureConfigured() {
   const cloud_name = process.env.CLOUDINARY_CLOUD_NAME;
@@ -24,17 +25,23 @@ export function createUploadSignature(input: {
   folder: string;
   publicId?: string;
   accessMode?: "public" | "authenticated";
+  context?: Record<string, string>;
 }) {
   const cld = ensureConfigured();
   const timestamp = Math.round(Date.now() / 1000);
-  const params: Record<string, string | number> = {
+  const privateUpload = input.accessMode !== "public";
+  const context = input.context && Object.entries(input.context).map(([key, value]) => `${key}=${value}`).join("|");
+  const params = {
     timestamp,
     folder: input.folder,
+    public_id: input.publicId,
+    type: privateUpload ? "authenticated" : "upload",
+    overwrite: false,
+    allowed_formats: privateUpload ? "pdf,jpg,png,webp" : "jpg,png,webp",
+    max_file_size: (privateUpload ? 10 : 5) * 1024 * 1024,
+    ...(context ? { context } : {}),
   };
-  if (input.publicId) params.public_id = input.publicId;
-  if (input.accessMode === "authenticated") {
-    params.type = "authenticated";
-  }
+  if (!input.publicId) delete params.public_id;
 
   const signature = cld.utils.api_sign_request(
     params,
@@ -47,8 +54,13 @@ export function createUploadSignature(input: {
     timestamp,
     folder: input.folder,
     publicId: input.publicId,
-    type: input.accessMode === "authenticated" ? "authenticated" : "upload",
+    type: privateUpload ? "authenticated" : "upload",
     signature,
+    overwrite: false,
+    allowedFormats: params.allowed_formats,
+    maxFileSize: params.max_file_size,
+    resourceType: "image",
+    ...(context ? { context } : {}),
   };
 }
 
@@ -61,15 +73,19 @@ export function verifyCloudinarySignature(params: Record<string, string | number
     rest,
     process.env.CLOUDINARY_API_SECRET as string,
   );
-  return expected === signature;
+  if (typeof signature !== "string" || !/^[a-f0-9]{40}$/i.test(signature)) return false;
+  return timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signature, "hex"));
 }
 
-export function buildAuthenticatedUrl(publicId: string, expiresInSec = 300) {
+export const DOWNLOAD_TTL_SECONDS = 60;
+
+export function buildAuthenticatedUrl(publicId: string, format: string) {
   const cld = ensureConfigured();
-  return cld.url(publicId, {
+  // A CDN sign_url signature does NOT expire. The download API signs expires_at.
+  return cld.utils.private_download_url(publicId, format, {
+    resource_type: "image",
     type: "authenticated",
-    sign_url: true,
-    secure: true,
-    expires_at: Math.floor(Date.now() / 1000) + expiresInSec,
+    attachment: true,
+    expires_at: Math.floor(Date.now() / 1000) + DOWNLOAD_TTL_SECONDS,
   });
 }

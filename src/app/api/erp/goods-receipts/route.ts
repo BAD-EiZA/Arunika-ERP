@@ -1,4 +1,4 @@
-import { requirePermission, requireTenant } from "@/lib/auth";
+import { assertRequestAccess, requireIdempotencyKey, assertResourceAccess, requirePermission } from "@/lib/auth";
 import { withApiHandler } from "@/lib/api-route";
 import { prisma } from "@/lib/db";
 import { postGoodsReceipt } from "@/server/services/procurement";
@@ -7,10 +7,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return withApiHandler(async () => {
-    const ctx = await requireTenant();
+    const ctx = await requirePermission("goods_receipt:view");
     const [receipts, openPos, warehouses] = await Promise.all([
       prisma.goodsReceipt.findMany({
-        where: { companyId: ctx.companyId },
+        where: { ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}),  companyId: ctx.companyId },
         include: {
           supplier: true,
           items: { include: { product: true } },
@@ -19,6 +19,8 @@ export async function GET() {
       }),
       prisma.purchaseOrder.findMany({
         where: {
+          ...(ctx.warehouseIds.length ? { warehouseId: { in: ctx.warehouseIds } } : {}),
+          ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}),
           companyId: ctx.companyId,
           status: { in: ["APPROVED", "SENT", "PARTIALLY_RECEIVED"] },
         },
@@ -29,7 +31,7 @@ export async function GET() {
         orderBy: { createdAt: "desc" },
       }),
       prisma.warehouse.findMany({
-        where: { companyId: ctx.companyId, isActive: true },
+        where: { ...(ctx.warehouseIds.length ? { id: { in: ctx.warehouseIds } } : {}), ...(ctx.branchIds.length ? { branchId: { in: ctx.branchIds } } : {}),  companyId: ctx.companyId, isActive: true },
       }),
     ]);
 
@@ -79,8 +81,13 @@ export async function POST(req: Request) {
         unitCost?: string | number;
       }>;
     };
+    await assertRequestAccess(ctx, body);
 
+    await assertResourceAccess(ctx, "warehouse", body.warehouseId);
+    await assertResourceAccess(ctx, "purchaseOrder", body.purchaseOrderId);
+    const idempotencyKey = requireIdempotencyKey(req);
     const gr = await postGoodsReceipt({
+      idempotencyKey,
       companyId: ctx.companyId,
       userId: ctx.user.id,
       purchaseOrderId: String(body.purchaseOrderId ?? ""),
